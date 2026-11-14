@@ -1,4 +1,5 @@
 {
+  "title": "BurnScan · Cambodia Fire Activity Explorer",
   "description": "Explore historical MODIS and VIIRS fire hotspots across Cambodia with interactive maps, activity dashboards, calendars, sensor comparisons, and filtered CSV exports.",
   "robots": {
     "index": false

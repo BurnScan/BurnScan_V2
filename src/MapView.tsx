@@ -10,6 +10,10 @@ export type MapPoint = {
   lng: number;
   sensor: "MODIS" | "VIIRS";
   province: string;
+  /** Observations behind this marker. Omitted for a single raw detection. */
+  count?: number;
+  /** Optional tooltip override (used by the live FIRMS feed). */
+  label?: string;
 };
 
 type BasemapSource = {
@@ -169,7 +173,7 @@ export default function MapView({
         " · Protected areas &copy; OpenStreetMap contributors",
     );
 
-    map.fitBounds(cambodiaBounds, { padding: [12, 12] });
+    map.fitBounds(cambodiaBounds, { padding: [12, 12], animate: false });
     pointsRef.current = L.layerGroup().addTo(map);
     if (import.meta.env.DEV) {
       (window as unknown as { __burnscanMap?: L.Map }).__burnscanMap = map;
@@ -183,6 +187,9 @@ export default function MapView({
     return () => {
       window.removeEventListener("resize", resize);
       observer.disconnect();
+      // Stops in-flight pan/zoom animations before teardown; without this a
+      // pending transitionend fires against a removed map pane.
+      map.stop();
       map.remove();
       mapRef.current = null;
       tileRef.current = null;
@@ -219,37 +226,44 @@ export default function MapView({
     };
   }, [basemap]);
 
-  // Hotspot markers, positioned from real latitude / longitude.
+  // Hotspot markers, positioned from real latitude / longitude. Grid cells are
+  // drawn as one bubble; both size and opacity scale with the detection count
+  // so dense areas of the archive stay readable against the imagery.
   useEffect(() => {
     const group = pointsRef.current;
     if (!group) return;
     group.clearLayers();
+    const maxCount = points.reduce((max, point) => Math.max(max, point.count ?? 1), 1);
     points.forEach((point) => {
       const style = markerStyle(point.sensor);
-      L.circleMarker([point.lat, point.lng], {
-        pane: PANE.hotspots,
-        radius: point.id === selectedId ? 13 : 9,
-        color: style.glow,
-        weight: 0,
-        fillColor: style.fill,
-        fillOpacity: 0.22,
-        interactive: false,
-      }).addTo(group);
+      const total = point.count ?? 1;
+      const selected = point.id === selectedId;
+      const weight = total > 1 ? Math.min(1, total / maxCount) : 1;
+      const radius = total > 1 ? 3.2 + Math.sqrt(weight) * 2.4 : 4.8;
+      // Labelled single detections (live FIRMS feed) get a white ring so they
+      // stay readable on top of satellite imagery.
+      const ringed = total === 1 && Boolean(point.label);
       const marker = L.circleMarker([point.lat, point.lng], {
         pane: PANE.hotspots,
-        radius: point.id === selectedId ? 6.5 : 4.8,
-        color: "#ffffff",
-        weight: 1.8,
+        radius: selected ? Math.max(radius + 3, 7) : radius,
+        color: selected || ringed ? "#ffffff" : style.fill,
+        weight: selected ? 2.4 : ringed ? 1.4 : 0,
         fillColor: style.fill,
-        fillOpacity: 1,
+        fillOpacity: selected ? 0.9 : total > 1 ? 0.1 + weight * 0.42 : 0.9,
         className: "hotspot-marker",
       });
       marker.on("click", () => onSelect(point));
-      marker.bindTooltip(`${point.province} · ${point.sensor}`, {
-        direction: "top",
-        offset: [0, -8],
-        className: "hotspot-tip",
-      });
+      marker.bindTooltip(
+        point.label ??
+          (total > 1
+            ? `${point.province} · ${total.toLocaleString()} observations`
+            : `${point.province} · ${point.sensor}`),
+        {
+          direction: "top",
+          offset: [0, -8],
+          className: "hotspot-tip",
+        },
+      );
       marker.addTo(group);
     });
   }, [points, selectedId, onSelect]);

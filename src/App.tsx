@@ -1,285 +1,19 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import MapView, { type Basemap, type MapPoint } from "./MapView";
+import Icon from "./Icon";
+import LiveAlerts from "./LiveAlerts";
+import {
+  loadDataset,
+  type Count,
+  type Dataset,
+  type Filters,
+  type FilterResult,
+  type LoadProgress,
+  type MapCell,
+} from "./dataset";
 
-type Page = "map" | "dashboard" | "calendar" | "comparison" | "anomaly";
-type Sensor = "MODIS" | "VIIRS";
-type RecordRow = {
-  id: number;
-  date: string;
-  time: string;
-  province: string;
-  sensor: Sensor;
-  satellite: string;
-  lat: number;
-  lng: number;
-  confidence: string;
-  frp: number;
-  x: number;
-  y: number;
-};
-type Filters = { province: string; sensor: string; satellite: string; start: string; end: string };
+type Page = "map" | "live" | "dashboard" | "calendar" | "comparison" | "anomaly";
 
-const records: RecordRow[] = [
-  {
-    id: 1,
-    date: "2025-03-18",
-    time: "13:42",
-    province: "Mondulkiri",
-    sensor: "VIIRS",
-    satellite: "Suomi NPP",
-    lat: 12.46,
-    lng: 107.19,
-    confidence: "Nominal",
-    frp: 18.4,
-    x: 73,
-    y: 55,
-  },
-  {
-    id: 2,
-    date: "2025-03-18",
-    time: "13:36",
-    province: "Ratanakiri",
-    sensor: "VIIRS",
-    satellite: "NOAA-20",
-    lat: 13.65,
-    lng: 107.04,
-    confidence: "High",
-    frp: 32.1,
-    x: 72,
-    y: 26,
-  },
-  {
-    id: 3,
-    date: "2025-03-16",
-    time: "10:18",
-    province: "Kampong Thom",
-    sensor: "MODIS",
-    satellite: "Terra",
-    lat: 12.74,
-    lng: 104.88,
-    confidence: "82%",
-    frp: 24.7,
-    x: 47,
-    y: 43,
-  },
-  {
-    id: 4,
-    date: "2025-03-12",
-    time: "14:06",
-    province: "Preah Vihear",
-    sensor: "MODIS",
-    satellite: "Aqua",
-    lat: 13.62,
-    lng: 104.98,
-    confidence: "91%",
-    frp: 41.3,
-    x: 48,
-    y: 22,
-  },
-  {
-    id: 5,
-    date: "2025-02-27",
-    time: "13:24",
-    province: "Kratie",
-    sensor: "VIIRS",
-    satellite: "NOAA-21",
-    lat: 12.49,
-    lng: 106.03,
-    confidence: "Nominal",
-    frp: 11.8,
-    x: 61,
-    y: 50,
-  },
-  {
-    id: 6,
-    date: "2025-02-20",
-    time: "10:30",
-    province: "Pursat",
-    sensor: "MODIS",
-    satellite: "Terra",
-    lat: 12.53,
-    lng: 103.91,
-    confidence: "76%",
-    frp: 16.2,
-    x: 32,
-    y: 54,
-  },
-  {
-    id: 7,
-    date: "2025-02-08",
-    time: "13:48",
-    province: "Stung Treng",
-    sensor: "VIIRS",
-    satellite: "Suomi NPP",
-    lat: 13.54,
-    lng: 105.97,
-    confidence: "High",
-    frp: 46.6,
-    x: 61,
-    y: 28,
-  },
-  {
-    id: 8,
-    date: "2025-01-29",
-    time: "14:12",
-    province: "Battambang",
-    sensor: "MODIS",
-    satellite: "Aqua",
-    lat: 13.02,
-    lng: 103.16,
-    confidence: "88%",
-    frp: 28.9,
-    x: 20,
-    y: 39,
-  },
-  {
-    id: 9,
-    date: "2025-01-18",
-    time: "13:30",
-    province: "Koh Kong",
-    sensor: "VIIRS",
-    satellite: "NOAA-20",
-    lat: 11.62,
-    lng: 103.01,
-    confidence: "Nominal",
-    frp: 9.7,
-    x: 21,
-    y: 72,
-  },
-  {
-    id: 10,
-    date: "2024-12-14",
-    time: "10:12",
-    province: "Kampong Speu",
-    sensor: "MODIS",
-    satellite: "Terra",
-    lat: 11.46,
-    lng: 104.52,
-    confidence: "69%",
-    frp: 13.1,
-    x: 42,
-    y: 73,
-  },
-  {
-    id: 11,
-    date: "2024-05-05",
-    time: "13:54",
-    province: "Mondulkiri",
-    sensor: "VIIRS",
-    satellite: "NOAA-21",
-    lat: 12.19,
-    lng: 107.08,
-    confidence: "High",
-    frp: 52.4,
-    x: 75,
-    y: 62,
-  },
-  {
-    id: 12,
-    date: "2024-04-21",
-    time: "10:42",
-    province: "Preah Vihear",
-    sensor: "MODIS",
-    satellite: "Aqua",
-    lat: 13.72,
-    lng: 104.69,
-    confidence: "94%",
-    frp: 61.7,
-    x: 45,
-    y: 19,
-  },
-  {
-    id: 13,
-    date: "2024-03-11",
-    time: "13:18",
-    province: "Kampong Thom",
-    sensor: "VIIRS",
-    satellite: "Suomi NPP",
-    lat: 12.93,
-    lng: 104.73,
-    confidence: "Nominal",
-    frp: 17.5,
-    x: 44,
-    y: 39,
-  },
-  {
-    id: 14,
-    date: "2024-02-02",
-    time: "10:24",
-    province: "Pursat",
-    sensor: "MODIS",
-    satellite: "Terra",
-    lat: 12.35,
-    lng: 103.64,
-    confidence: "80%",
-    frp: 21.9,
-    x: 29,
-    y: 57,
-  },
-  {
-    id: 15,
-    date: "2023-04-17",
-    time: "13:42",
-    province: "Ratanakiri",
-    sensor: "VIIRS",
-    satellite: "NOAA-20",
-    lat: 13.83,
-    lng: 106.99,
-    confidence: "High",
-    frp: 74.2,
-    x: 72,
-    y: 23,
-  },
-  {
-    id: 16,
-    date: "2023-03-24",
-    time: "10:06",
-    province: "Kratie",
-    sensor: "MODIS",
-    satellite: "Aqua",
-    lat: 12.71,
-    lng: 106.15,
-    confidence: "86%",
-    frp: 37.5,
-    x: 63,
-    y: 45,
-  },
-  {
-    id: 17,
-    date: "2023-02-12",
-    time: "13:30",
-    province: "Stung Treng",
-    sensor: "VIIRS",
-    satellite: "Suomi NPP",
-    lat: 13.38,
-    lng: 105.88,
-    confidence: "Nominal",
-    frp: 25.3,
-    x: 59,
-    y: 31,
-  },
-  {
-    id: 18,
-    date: "2023-01-08",
-    time: "10:48",
-    province: "Battambang",
-    sensor: "MODIS",
-    satellite: "Terra",
-    lat: 13.21,
-    lng: 103.12,
-    confidence: "71%",
-    frp: 14.6,
-    x: 18,
-    y: 35,
-  },
-];
-
-const provinces = [...new Set(records.map((r) => r.province))].sort();
-const satellites: Record<string, string[]> = {
-  "All sensors": ["All satellites", "Terra", "Aqua", "Suomi NPP", "NOAA-20", "NOAA-21"],
-  MODIS: ["All satellites", "Terra", "Aqua"],
-  VIIRS: ["All satellites", "Suomi NPP", "NOAA-20", "NOAA-21"],
-};
 const defaultFilters: Filters = {
   province: "All provinces",
   sensor: "All sensors",
@@ -287,74 +21,6 @@ const defaultFilters: Filters = {
   start: "",
   end: "",
 };
-
-function Icon({ name, size = 18 }: { name: string; size?: number }) {
-  const paths: Record<string, React.ReactNode> = {
-    map: (
-      <>
-        <path d="m3 6 5-3 8 3 5-3v15l-5 3-8-3-5 3Z" />
-        <path d="M8 3v15m8-12v15" />
-      </>
-    ),
-    dashboard: (
-      <>
-        <rect x="3" y="3" width="7" height="7" rx="1" />
-        <rect x="14" y="3" width="7" height="7" rx="1" />
-        <rect x="3" y="14" width="7" height="7" rx="1" />
-        <rect x="14" y="14" width="7" height="7" rx="1" />
-      </>
-    ),
-    calendar: (
-      <>
-        <rect x="3" y="5" width="18" height="16" rx="2" />
-        <path d="M16 3v4M8 3v4M3 10h18" />
-      </>
-    ),
-    compare: (
-      <>
-        <path d="M5 20V10m7 10V4m7 16v-7" />
-      </>
-    ),
-    anomaly: (
-      <>
-        <path d="M12 3 2.8 19h18.4L12 3Z" />
-        <path d="M12 9v4m0 3h.01" />
-      </>
-    ),
-    download: (
-      <>
-        <path d="M12 3v12m-4-4 4 4 4-4" />
-        <path d="M4 19h16" />
-      </>
-    ),
-    flame: (
-      <path d="M12 22c4.4 0 7-3 7-7 0-3-1.5-5.3-4.5-8.5.1 3-1.7 4.3-2.7 5-1-2.7-2.5-5-4.8-7.5.2 4-2 6.2-2 10.5C5 18.7 7.7 22 12 22Z" />
-    ),
-    chevron: <path d="m9 18 6-6-6-6" />,
-    info: (
-      <>
-        <circle cx="12" cy="12" r="9" />
-        <path d="M12 11v5m0-8h.01" />
-      </>
-    ),
-    close: <path d="m6 6 12 12M18 6 6 18" />,
-  };
-  return (
-    <svg
-      aria-hidden="true"
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      {paths[name]}
-    </svg>
-  );
-}
 
 function toISO(value: string) {
   if (!value) return "";
@@ -373,23 +39,22 @@ function toDisplay(iso: string) {
   return `${d}/${m}/${y}`;
 }
 function formatDate(iso: string) {
+  if (!iso) return "—";
   return new Intl.DateTimeFormat("en-GB", {
     day: "2-digit",
     month: "short",
     year: "numeric",
-  }).format(new Date(`${iso}T00:00:00`));
+    timeZone: "UTC",
+  }).format(new Date(`${iso}T00:00:00Z`));
 }
-function filterRows(rows: RecordRow[], filters: Filters) {
-  const start = toISO(filters.start);
-  const end = toISO(filters.end);
-  return rows.filter(
-    (r) =>
-      (filters.province === "All provinces" || r.province === filters.province) &&
-      (filters.sensor === "All sensors" || r.sensor === filters.sensor) &&
-      (filters.satellite === "All satellites" || r.satellite === filters.satellite) &&
-      (!start || r.date >= start) &&
-      (!end || r.date <= end),
-  );
+function formatCount(value: number) {
+  return value.toLocaleString("en-US");
+}
+function formatCompact(value: number) {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}m`;
+  if (value >= 10_000) return `${Math.round(value / 1000)}k`;
+  if (value >= 1_000) return `${(value / 1000).toFixed(1)}k`;
+  return String(value);
 }
 function dateError(filters: Filters) {
   const start = toISO(filters.start);
@@ -448,6 +113,7 @@ function FilterField({
 }
 
 function FilterBar({
+  dataset,
   pending,
   setPending,
   apply,
@@ -457,6 +123,7 @@ function FilterBar({
   allSensorLabel = "All sensors",
   error,
 }: {
+  dataset: Dataset;
   pending: Filters;
   setPending: (f: Filters) => void;
   apply: () => void;
@@ -476,21 +143,21 @@ function FilterBar({
           <FilterField
             label="Province"
             value={pending.province}
-            options={["All provinces", ...provinces]}
+            options={["All provinces", ...dataset.provinces]}
             onChange={(province) => setPending({ ...pending, province })}
           />
         )}
         <FilterField
           label="Sensor"
           value={pending.sensor}
-          options={Object.keys(satellites)}
+          options={["All sensors", ...dataset.sensors]}
           onChange={sensorChange}
           allSensorLabel={allSensorLabel}
         />
         <FilterField
           label="Satellite"
           value={pending.satellite}
-          options={satellites[pending.sensor]}
+          options={dataset.satellitesFor(pending.sensor)}
           onChange={(satellite) => setPending({ ...pending, satellite })}
         />
         <FilterField
@@ -522,10 +189,10 @@ function FilterBar({
   );
 }
 
-function Badge() {
+function Badge({ label = "Full archive" }: { label?: string }) {
   return (
     <span className="demo-badge">
-      <span /> Demo data
+      <span /> {label}
     </span>
   );
 }
@@ -537,8 +204,47 @@ function DownloadButton({ onClick }: { onClick: () => void }) {
   );
 }
 
+function Splash({ progress, error }: { progress: LoadProgress | null; error: string }) {
+  const percent =
+    progress && progress.total
+      ? Math.min(100, Math.round((progress.loaded / progress.total) * 100))
+      : null;
+  return (
+    <div className="splash">
+      <div className="splash-card">
+        <div className="brand-mark">
+          <Icon name="flame" size={28} />
+        </div>
+        <strong>BurnScan</strong>
+        <small>Cambodia hotspot archive</small>
+        {error ? (
+          <p className="splash-error">{error}</p>
+        ) : (
+          <>
+            <p>
+              {percent === null
+                ? "Loading the satellite hotspot archive…"
+                : `Loading ${formatCount(Math.round(progress!.loaded / 1_048_576))} of ${formatCount(
+                    Math.round(progress!.total / 1_048_576),
+                  )} MB of observations · ${percent}%`}
+            </p>
+            <div className="splash-bar">
+              <i style={{ width: `${percent ?? 10}%` }} />
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [page, setPage] = useState<Page>("map");
+  const [dataset, setDataset] = useState<Dataset | null>(null);
+  const [progress, setProgress] = useState<LoadProgress | null>(null);
+  const [loadError, setLoadError] = useState("");
+  const lastPercent = useRef(-1);
+
   const [mapPending, setMapPending] = useState(defaultFilters);
   const [mapApplied, setMapApplied] = useState(defaultFilters);
   const [dashPending, setDashPending] = useState(defaultFilters);
@@ -551,6 +257,7 @@ function App() {
   const [anomalyApplied, setAnomalyApplied] = useState(defaultFilters);
   const [errors, setErrors] = useState<Record<Page, string>>({
     map: "",
+    live: "",
     dashboard: "",
     calendar: "",
     comparison: "",
@@ -558,19 +265,40 @@ function App() {
   });
   const [loading, setLoading] = useState<Record<Page, boolean>>({
     map: false,
+    live: false,
     dashboard: false,
     calendar: false,
     comparison: false,
     anomaly: false,
   });
-  const [selected, setSelected] = useState<RecordRow | null>(null);
   const [notice, setNotice] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    loadDataset((next) => {
+      if (cancelled) return;
+      const percent = next.total ? Math.round((next.loaded / next.total) * 100) : -1;
+      if (percent === lastPercent.current) return;
+      lastPercent.current = percent;
+      setProgress(next);
+    })
+      .then((loaded) => {
+        if (cancelled) return;
+        setDataset(loaded);
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setLoadError(error instanceof Error ? error.message : String(error));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const navigateMap = (patch: Partial<Filters>) => {
     const next = { ...defaultFilters, ...patch };
     setMapPending(next);
     setMapApplied(next);
-    setSelected(null);
     setPage("map");
   };
   const apply = (key: Page, pending: Filters, setApplied: (f: Filters) => void) => {
@@ -580,44 +308,52 @@ function App() {
       setLoading((current) => ({ ...current, [key]: true }));
       window.setTimeout(() => {
         setApplied(pending);
-        setSelected(null);
         setLoading((current) => ({ ...current, [key]: false }));
-      }, 450);
+      }, 320);
     }
   };
   const reset = (key: Page, setPending: (f: Filters) => void, setApplied: (f: Filters) => void) => {
     setPending(defaultFilters);
     setApplied(defaultFilters);
     setErrors((e) => ({ ...e, [key]: "" }));
-    setSelected(null);
   };
   const exportCsv = (filters: Filters, filename: string) => {
-    const rows = filterRows(records, filters);
-    const header =
-      "Observation date,Time,Province,Sensor,Satellite,Latitude,Longitude,Source confidence,FRP (MW)";
-    const body = rows
-      .map((r) =>
-        [r.date, r.time, r.province, r.sensor, r.satellite, r.lat, r.lng, r.confidence, r.frp].join(
-          ",",
-        ),
-      )
-      .join("\n");
-    const url = URL.createObjectURL(new Blob([`${header}\n${body}`], { type: "text/csv" }));
+    if (!dataset) return;
+    const { csv, exported, total, sampled } = dataset.exportCsv(filters);
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
     const a = document.createElement("a");
     a.href = url;
     a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
-    setNotice(`${rows.length} filtered hotspot records exported`);
-    window.setTimeout(() => setNotice(""), 2600);
+    setNotice(
+      sampled
+        ? `${formatCount(exported)} of ${formatCount(total)} matching records exported (evenly sampled)`
+        : `${formatCount(exported)} hotspot records exported`,
+    );
+    window.setTimeout(() => setNotice(""), 3200);
   };
 
+  if (!dataset) {
+    return (
+      <Splash
+        progress={progress}
+        error={
+          loadError
+            ? `${loadError}`
+            : ""
+        }
+      />
+    );
+  }
+
   const nav = [
-    ["map", "Fire Alerts Interactive Map", "map"],
-    ["dashboard", "Dashboard", "dashboard"],
-    ["calendar", "Activity Calendar", "calendar"],
-    ["comparison", "Sensor Comparison", "compare"],
-    ["anomaly", "Anomaly Detection", "anomaly"],
+    ["map", "Fire Alerts Interactive Map", "map", "Map"],
+    ["live", "Live Fire Alerts", "satellite", "Live"],
+    ["dashboard", "Dashboard", "dashboard", "Overview"],
+    ["calendar", "Activity Calendar", "calendar", "Calendar"],
+    ["comparison", "Sensor Comparison", "compare", "Compare"],
+    ["anomaly", "Anomaly Detection", "anomaly", "Anomaly"],
   ] as const;
   return (
     <div className="app-shell">
@@ -632,18 +368,22 @@ function App() {
           </div>
         </div>
         <nav aria-label="Primary navigation">
-          {nav.map(([key, label, icon]) => (
+          {nav.map(([key, label, icon, short]) => (
             <button key={key} className={page === key ? "active" : ""} onClick={() => setPage(key)}>
               <Icon name={icon} />
-              <span>{label}</span>
+              <span className="nav-long">{label}</span>
+              <span className="nav-short">{short}</span>
               {page === key && <Icon name="chevron" size={15} />}
             </button>
           ))}
         </nav>
         <div className="sidebar-note">
-          <span className="eyebrow">About this prototype</span>
+          <span className="eyebrow">About this dataset</span>
           <p>Hotspots are satellite observations, not unique fires or burned area.</p>
-          <span className="source">MODIS + VIIRS archive</span>
+          <span className="source">
+            {formatCount(dataset.size)} detections · {dataset.manifest.coverage.start.slice(0, 4)}–
+            {dataset.manifest.coverage.end.slice(0, 4)}
+          </span>
         </div>
       </aside>
       <main>
@@ -654,19 +394,20 @@ function App() {
         )}
         {page === "map" && (
           <MapPage
+            dataset={dataset}
             pending={mapPending}
             applied={mapApplied}
             setPending={setMapPending}
             error={errors.map}
-            selected={selected}
-            setSelected={setSelected}
             apply={() => apply("map", mapPending, setMapApplied)}
             reset={() => reset("map", setMapPending, setMapApplied)}
             download={() => exportCsv(mapApplied, "burnscan-map-hotspots.csv")}
           />
         )}
+        {page === "live" && <LiveAlerts />}
         {page === "dashboard" && (
           <Dashboard
+            dataset={dataset}
             pending={dashPending}
             applied={dashApplied}
             setPending={setDashPending}
@@ -679,6 +420,7 @@ function App() {
         )}
         {page === "calendar" && (
           <CalendarPage
+            dataset={dataset}
             pending={calPending}
             applied={calApplied}
             setPending={setCalPending}
@@ -690,6 +432,7 @@ function App() {
         )}
         {page === "comparison" && (
           <Comparison
+            dataset={dataset}
             pending={comparisonPending}
             applied={comparisonApplied}
             setPending={setComparisonPending}
@@ -701,6 +444,7 @@ function App() {
         )}
         {page === "anomaly" && (
           <AnomalyDetection
+            dataset={dataset}
             pending={anomalyPending}
             applied={anomalyApplied}
             setPending={setAnomalyPending}
@@ -725,11 +469,13 @@ function PageHeader({
   title,
   subtitle,
   action,
+  badge,
 }: {
   eyebrow: string;
   title: string;
   subtitle: string;
   action?: React.ReactNode;
+  badge?: string;
 }) {
   return (
     <header className="page-header">
@@ -737,7 +483,7 @@ function PageHeader({
         <span className="eyebrow">{eyebrow}</span>
         <div className="title-row">
           <h1>{title}</h1>
-          <Badge />
+          <Badge label={badge} />
         </div>
         <p>{subtitle}</p>
       </div>
@@ -747,6 +493,7 @@ function PageHeader({
 }
 
 function MapPage({
+  dataset,
   pending,
   applied,
   setPending,
@@ -754,9 +501,8 @@ function MapPage({
   reset,
   download,
   error,
-  selected,
-  setSelected,
 }: {
+  dataset: Dataset;
   pending: Filters;
   applied: Filters;
   setPending: (f: Filters) => void;
@@ -764,38 +510,35 @@ function MapPage({
   reset: () => void;
   download: () => void;
   error: string;
-  selected: RecordRow | null;
-  setSelected: (r: RecordRow | null) => void;
 }) {
-  const rows = useMemo(() => filterRows(records, applied), [applied]);
+  const result = useMemo(() => dataset.query(applied), [dataset, applied]);
+  const points: MapPoint[] = useMemo(() => dataset.mapPoints(result), [dataset, result]);
   const [basemap, setBasemap] = useState<Basemap>("satellite");
   const [showBoundaries, setShowBoundaries] = useState(true);
   const [showProtected, setShowProtected] = useState(false);
-  const points: MapPoint[] = useMemo(
-    () =>
-      rows.map((r) => ({
-        id: r.id,
-        lat: r.lat,
-        lng: r.lng,
-        sensor: r.sensor,
-        province: r.province,
-      })),
-    [rows],
-  );
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [selected, setSelected] = useState<MapCell | null>(null);
+
   const selectPoint = useCallback(
     (point: MapPoint) => {
-      setSelected(records.find((r) => r.id === point.id) ?? null);
+      setSelected(result.cells.find((cell) => cell.id === point.id) ?? null);
     },
-    [setSelected],
+    [result],
   );
+
+  const months = result.byMonth.slice(-48);
+  const monthMax = Math.max(...months.map(([, value]) => value), 1);
+
   return (
     <div className="page map-page">
       <PageHeader
         eyebrow="Explore the archive"
         title="Fire Alerts Interactive Map"
-        subtitle="Historical satellite hotspot observations across Cambodia"
+        subtitle={`${formatCount(result.count)} satellite hotspot observations across ${
+          applied.province === "All provinces" ? "Cambodia" : applied.province
+        }`}
         action={<DownloadButton onClick={download} />}
+        badge={`${formatCount(result.cells.length)} cells`}
       />
       <section className="map-card">
         <div className="map-canvas">
@@ -805,7 +548,7 @@ function MapPage({
             aria-expanded={filtersOpen}
           >
             <Icon name="compare" size={15} /> Filters
-            <b>{rows.length}</b>
+            <b>{formatCount(result.cells.length)}</b>
           </button>
           <div className={`map-filters ${filtersOpen ? "open" : ""}`}>
             <h2>
@@ -815,13 +558,17 @@ function MapPage({
               <Icon name="map" size={15} /> Cambodia <span>Locked</span>
             </div>
             <FilterBar
+              dataset={dataset}
               pending={pending}
               setPending={setPending}
               apply={() => {
                 apply();
                 setFiltersOpen(false);
               }}
-              reset={reset}
+              reset={() => {
+                reset();
+                setSelected(null);
+              }}
               showProvince
               error={error}
             />
@@ -875,7 +622,7 @@ function MapPage({
             showBoundaries={showBoundaries}
             showProtected={showProtected}
           />
-          {rows.length === 0 && (
+          {result.count === 0 && (
             <div className="empty">
               <Icon name="map" size={28} />
               <strong>No hotspots match these filters</strong>
@@ -885,72 +632,88 @@ function MapPage({
           <div className="activity-playback">
             <div>
               <strong>Explore activity over time</strong>
-              <span>Example playback • Applied period</span>
+              <span>Observations per month · Applied period</span>
             </div>
             <div className="playback-row">
-              <button aria-label="Play activity timeline">▶</button>
+              <span className="playback-total" title="Hotspots in the applied period">
+                {formatCompact(result.count)}
+              </span>
               <div className="timeline-bars">
-                {Array.from({ length: 28 }, (_, i) => (
-                  <i key={i} style={{ height: `${8 + ((i * 7) % 22)}px` }} />
+                {months.map(([label, value]) => (
+                  <i
+                    key={label}
+                    title={`${label}: ${formatCount(value)} hotspots`}
+                    style={{ height: `${8 + (value / monthMax) * 26}px` }}
+                  />
                 ))}
               </div>
             </div>
             <div className="timeline-labels">
-              <span>{applied.start || "Start"}</span>
+              <span>{result.firstDay || applied.start || "Start"}</span>
               <span>{appliedRange(applied)}</span>
-              <span>{applied.end || "Latest"}</span>
+              <span>{result.lastDay || applied.end || "Latest"}</span>
             </div>
           </div>
-          <div className="map-source">Illustrative hotspots • CSV follows applied filters</div>
+          <div className="map-source">
+            Hotspot detections aggregated to ~11 km cells • CSV follows applied filters
+          </div>
         </div>
         <aside className={`detail-panel ${selected ? "open" : ""}`}>
           {selected ? (
             <>
-              <button
-                className="close"
-                onClick={() => setSelected(null)}
-                aria-label="Close details"
-              >
+              <button className="close" onClick={() => setSelected(null)} aria-label="Close details">
                 <Icon name="close" />
               </button>
-              <span className="eyebrow">Selected hotspot</span>
+              <span className="eyebrow">Selected cluster</span>
               <h2>{selected.province}</h2>
               <div className="detail-time">
-                {formatDate(selected.date)} <span>at {selected.time} ICT</span>
+                {formatDate(selected.firstDate)}
+                {selected.firstDate !== selected.lastDate && ` – ${formatDate(selected.lastDate)}`}
               </div>
               <dl>
                 <div>
-                  <dt>Province</dt>
-                  <dd>{selected.province}</dd>
+                  <dt>Observations</dt>
+                  <dd>{formatCount(selected.count)}</dd>
                 </div>
                 <div>
-                  <dt>Sensor</dt>
-                  <dd>{selected.sensor}</dd>
-                </div>
-                <div>
-                  <dt>Satellite</dt>
-                  <dd>{selected.satellite}</dd>
-                </div>
-                <div>
-                  <dt>Coordinates</dt>
+                  <dt>Sensor mix</dt>
                   <dd>
-                    {selected.lat.toFixed(4)}, {selected.lng.toFixed(4)}
+                    {formatCount(selected.modis)} MODIS · {formatCount(selected.viirs)} VIIRS
+                  </dd>
+                </div>
+                <div>
+                  <dt>Cell centre</dt>
+                  <dd>
+                    {selected.lat.toFixed(3)}, {selected.lng.toFixed(3)}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Peak FRP in cell</dt>
+                  <dd>
+                    {selected.maxFrp} <small>MW</small>
+                  </dd>
+                </div>
+                <div>
+                  <dt>Strongest detection</dt>
+                  <dd>
+                    {formatDate(selected.top.date)} at {selected.top.time} ICT
                   </dd>
                 </div>
                 <div>
                   <dt>Source confidence</dt>
-                  <dd>{selected.confidence}</dd>
+                  <dd>{selected.top.confidence}</dd>
                 </div>
                 <div className="frp">
                   <dt>Fire radiative power</dt>
                   <dd>
-                    {selected.frp} <small>MW</small>
+                    {selected.top.frp} <small>MW</small>
                   </dd>
                 </div>
               </dl>
               <p className="definition">
-                <Icon name="info" size={15} /> FRP is radiant energy at observation time; it is not
-                a measure of fire size.
+                <Icon name="info" size={15} /> Each marker summarises every detection that falls in
+                the same 0.1° cell. FRP is radiant energy at observation time; it is not a measure
+                of fire size.
               </p>
             </>
           ) : (
@@ -958,8 +721,8 @@ function MapPage({
               <div className="radar">
                 <span />
               </div>
-              <h2>Select a hotspot</h2>
-              <p>Choose any orange marker to inspect its observation details.</p>
+              <h2>Select a cluster</h2>
+              <p>Choose any orange or teal marker to inspect its hotspot summary.</p>
             </div>
           )}
         </aside>
@@ -969,13 +732,17 @@ function MapPage({
           </h2>
           <div>
             <span>Hotspots in view</span>
-            <strong>{rows.length}</strong>
+            <strong>{formatCount(result.count)}</strong>
+          </div>
+          <div>
+            <span>Map cells</span>
+            <strong>{formatCount(result.cells.length)}</strong>
           </div>
           <div>
             <span>Applied area</span>
             <strong>{applied.province === "All provinces" ? "Cambodia" : applied.province}</strong>
           </div>
-          <Badge />
+          <Badge label="Real detections" />
         </aside>
       </section>
     </div>
@@ -983,6 +750,7 @@ function MapPage({
 }
 
 function Dashboard({
+  dataset,
   pending,
   applied,
   setPending,
@@ -992,6 +760,7 @@ function Dashboard({
   error,
   navigateMap,
 }: {
+  dataset: Dataset;
   pending: Filters;
   applied: Filters;
   setPending: (f: Filters) => void;
@@ -1001,16 +770,12 @@ function Dashboard({
   error: string;
   navigateMap: (p: Partial<Filters>) => void;
 }) {
-  const rows = filterRows(records, { ...applied, province: "All provinces" });
-  const counts = Object.entries(
-    rows.reduce<Record<string, number>>(
-      (a, r) => ({ ...a, [r.province]: (a[r.province] || 0) + 1 }),
-      {},
-    ),
-  ).sort((a, b) => b[1] - a[1]);
-  const dayCounts = Object.entries(
-    rows.reduce<Record<string, number>>((a, r) => ({ ...a, [r.date]: (a[r.date] || 0) + 1 }), {}),
-  ).sort((a, b) => b[1] - a[1] || b[0].localeCompare(a[0]));
+  const result = useMemo(
+    () => dataset.query({ ...applied, province: "All provinces" }),
+    [dataset, applied],
+  );
+  const monthCounts = useMemo(() => new Map(result.byMonth), [result]);
+  const peak = result.byDay[0];
   return (
     <div className="page">
       <PageHeader
@@ -1018,8 +783,10 @@ function Dashboard({
         title="Dashboard"
         subtitle="Historical hotspot activity across Cambodia"
         action={<DownloadButton onClick={download} />}
+        badge={`${formatCount(result.count)} hotspots`}
       />
       <FilterBar
+        dataset={dataset}
         pending={pending}
         setPending={setPending}
         apply={apply}
@@ -1035,47 +802,42 @@ function Dashboard({
         <strong>Applied date range: {appliedRange(applied)}</strong>
       </div>
       <div className="stats">
-        <Stat label="Total hotspots" value={rows.length.toLocaleString()} icon="flame" />
+        <Stat label="Total hotspots" value={formatCount(result.count)} icon="flame" />
         <Stat
           label="Provinces with hotspots"
-          value={new Set(rows.map((r) => r.province)).size.toString()}
+          value={`${result.provinceCount} / ${dataset.provinces.length}`}
           icon="map"
         />
         <Stat
           label="Peak activity day"
-          value={dayCounts[0] ? formatDate(dayCounts[0][0]) : "—"}
-          note={dayCounts[0] ? `${dayCounts[0][1]} hotspots` : undefined}
+          value={peak ? formatDate(peak[0]) : "—"}
+          note={peak ? `${formatCount(peak[1])} hotspots` : undefined}
           icon="calendar"
         />
         <Stat
-          label="Hotspots in protected areas"
-          value="Unavailable"
-          note="Boundary data missing"
-          icon="info"
-          muted
+          label="Highest FRP"
+          value={`${result.maxFrp} MW`}
+          note={`Mean ${result.meanFrp} MW`}
+          icon="anomaly"
         />
       </div>
       <div className="dashboard-grid">
         <Panel
-          title="Hotspots over time"
-          subtitle="Monthly observations in the applied range"
+          title="Seasonal hotspot profile"
+          subtitle="Observations by month of year in the applied range"
           className="wide"
         >
-          <LineChart rows={rows} />
+          <LineChart values={result.byMonthOfYear} />
         </Panel>
         <Panel title="Hotspots by satellite" subtitle="Share of filtered observations">
-          <Donut rows={rows} />
+          <Donut groups={result.bySatellite} total={result.count} />
         </Panel>
-        <Panel
-          title="Top 10 provinces"
-          subtitle="Select a bar to explore on the map"
-          className="wide"
-        >
-          <Bars counts={counts} onSelect={(province) => navigateMap({ province })} />
+        <Panel title="Top 10 provinces" subtitle="Select a bar to explore on the map" className="wide">
+          <Bars counts={result.byProvince} onSelect={(province) => navigateMap({ province })} />
         </Panel>
         <Panel title="Top 10 peak activity days" subtitle="Ranked by hotspot observations">
           <PeakTable
-            days={dayCounts}
+            days={result.byDay}
             onSelect={(date) => navigateMap({ start: toDisplay(date), end: toDisplay(date) })}
           />
         </Panel>
@@ -1086,13 +848,16 @@ function Dashboard({
         >
           <Heatmap
             compact
-            rows={rows}
+            counts={monthCounts}
+            start={dataset.manifest.coverage.start}
+            end={dataset.manifest.coverage.end}
             onSelect={(year, month) => navigateMap(monthRange(year, month))}
           />
         </Panel>
       </div>
       <p className="footnote">
-        Illustrative data. Hotspots are satellite observations, not unique fires or burned area.
+        Source: {dataset.source} · {formatCount(dataset.size)} detections. Hotspots are satellite
+        observations, not unique fires or burned area.
       </p>
     </div>
   );
@@ -1129,11 +894,13 @@ function Panel({
   subtitle,
   children,
   className = "",
+  badge = "Filtered",
 }: {
   title: string;
   subtitle: string;
   children: React.ReactNode;
   className?: string;
+  badge?: string;
 }) {
   return (
     <section className={`panel ${className}`}>
@@ -1142,13 +909,14 @@ function Panel({
           <h2>{title}</h2>
           <p>{subtitle}</p>
         </div>
-        <span className="illustrative">Illustrative</span>
+        <span className="illustrative">{badge}</span>
       </div>
       {children}
     </section>
   );
 }
-function LineChart({ rows }: { rows: RecordRow[] }) {
+
+function LineChart({ values }: { values: number[] }) {
   const months = [
     "Jan",
     "Feb",
@@ -1163,23 +931,22 @@ function LineChart({ rows }: { rows: RecordRow[] }) {
     "Nov",
     "Dec",
   ];
-  const vals = months.map((_, i) => rows.filter((r) => +r.date.slice(5, 7) === i + 1).length);
-  const max = Math.max(...vals, 1);
-  const pts = vals.map((v, i) => `${38 + i * 47},${128 - (v / max) * 90}`).join(" ");
-  const path = vals.map((v, i) => `${38 + i * 47} ${128 - (v / max) * 90}`).join(" L ");
+  const max = Math.max(...values, 1);
+  const pts = values.map((v, i) => `${38 + i * 47},${128 - (v / max) * 90}`).join(" ");
+  const path = values.map((v, i) => `${38 + i * 47} ${128 - (v / max) * 90}`).join(" L ");
   return (
     <svg
       className="line-chart"
       viewBox="0 0 580 165"
       preserveAspectRatio="none"
-      aria-label="Line chart of hotspots over time"
+      aria-label="Line chart of hotspots by month of year"
     >
       {[38, 68, 98, 128].map((y) => (
         <line key={y} x1="38" y1={y} x2="560" y2={y} className="grid-line" />
       ))}
       <path d={`M ${path}`} className="area-line" />
       <polyline points={pts} className="chart-line" />
-      {vals.map((v, i) => (
+      {values.map((v, i) => (
         <g key={i}>
           <circle cx={38 + i * 47} cy={128 - (v / max) * 90} r="3" />
           <text x={38 + i * 47} y="151">
@@ -1190,53 +957,56 @@ function LineChart({ rows }: { rows: RecordRow[] }) {
     </svg>
   );
 }
-function Donut({ rows }: { rows: RecordRow[] }) {
-  const groups = ["Terra", "Aqua", "Suomi NPP", "NOAA-20", "NOAA-21"].map(
-    (s) => [s, rows.filter((r) => r.satellite === s).length] as const,
-  );
+
+function Donut({ groups, total }: { groups: Count[]; total: number }) {
   const colors = ["#ef5b21", "#ffad45", "#0c9c91", "#08736e", "#70c9bb"];
-  const total = rows.length || 1;
+  const sum = groups.reduce((acc, [, value]) => acc + value, 0) || 1;
   let acc = 0;
   const gradient = groups
-    .map(([_, v], i) => {
+    .map(([, value], i) => {
       const start = acc;
-      acc += (v / total) * 100;
-      return `${colors[i]} ${start}% ${acc}%`;
+      acc += (value / sum) * 100;
+      return `${colors[i % colors.length]} ${start}% ${acc}%`;
     })
     .join(",");
   return (
     <div className="donut-wrap">
       <div className="donut" style={{ background: `conic-gradient(${gradient || "#ddd 0 100%"})` }}>
         <div>
-          <strong>{rows.length}</strong>
+          <strong>{formatCompact(total)}</strong>
           <span>Hotspots</span>
         </div>
       </div>
       <div className="donut-legend">
-        {groups.map(([s, v], i) => (
-          <div key={s}>
-            <i style={{ background: colors[i] }} />
-            <span>{s}</span>
-            <strong>{Math.round((v / total) * 100)}%</strong>
+        {groups.map(([name, value], i) => (
+          <div key={name}>
+            <i style={{ background: colors[i % colors.length] }} />
+            <span>{name}</span>
+            <strong>{Math.round((value / sum) * 100)}%</strong>
           </div>
         ))}
       </div>
     </div>
   );
 }
-function Bars({ counts, onSelect }: { counts: [string, number][]; onSelect: (p: string) => void }) {
+
+function Bars({ counts, onSelect }: { counts: Count[]; onSelect: (p: string) => void }) {
   const shown = counts.slice(0, 10),
     max = Math.max(...shown.map((x) => x[1]), 1);
   return (
     <div className="bars">
       {shown.length ? (
         shown.map(([name, value]) => (
-          <button key={name} onClick={() => onSelect(name)} title={`Open ${name} on map`}>
+          <button
+            key={name}
+            onClick={() => onSelect(name)}
+            title={`Open ${name} on map · ${formatCount(value)} hotspots`}
+          >
             <span>{name}</span>
             <i>
               <b style={{ width: `${(value / max) * 100}%` }} />
             </i>
-            <strong>{value}</strong>
+            <strong>{formatCompact(value)}</strong>
           </button>
         ))
       ) : (
@@ -1245,13 +1015,8 @@ function Bars({ counts, onSelect }: { counts: [string, number][]; onSelect: (p: 
     </div>
   );
 }
-function PeakTable({
-  days,
-  onSelect,
-}: {
-  days: [string, number][];
-  onSelect: (d: string) => void;
-}) {
+
+function PeakTable({ days, onSelect }: { days: Count[]; onSelect: (d: string) => void }) {
   return (
     <div className="table-wrap">
       <table>
@@ -1268,7 +1033,7 @@ function PeakTable({
               <td>{String(i + 1).padStart(2, "0")}</td>
               <td>{formatDate(d)}</td>
               <td>
-                <strong>{v}</strong>
+                <strong>{formatCount(v)}</strong>
               </td>
             </tr>
           ))}
@@ -1303,16 +1068,27 @@ function monthRange(year: number, month: number) {
     end: `${end}/${String(month).padStart(2, "0")}/${year}`,
   };
 }
+
 function Heatmap({
-  rows,
+  counts,
+  start,
+  end,
   compact = false,
   onSelect,
 }: {
-  rows: RecordRow[];
+  counts: Map<string, number>;
+  start: string;
+  end: string;
   compact?: boolean;
   onSelect: (y: number, m: number) => void;
 }) {
-  const years = [2021, 2022, 2023, 2024, 2025];
+  const firstKey = start.slice(0, 7);
+  const lastKey = end.slice(0, 7);
+  const years: number[] = [];
+  for (let year = Number(start.slice(0, 4)); year <= Number(end.slice(0, 4)); year++) {
+    years.push(year);
+  }
+  const max = Math.max(...counts.values(), 1);
   return (
     <div className={`heatmap ${compact ? "compact" : ""}`}>
       <div className="heat-grid">
@@ -1324,25 +1100,21 @@ function Heatmap({
           <React.Fragment key={y}>
             <b>{y}</b>
             {monthNames.map((_, mi) => {
-              const count = rows.filter(
-                (r) => +r.date.slice(0, 4) === y && +r.date.slice(5, 7) === mi + 1,
-              ).length;
-              const missing = y < 2023 && mi > 7;
+              const key = `${y}-${String(mi + 1).padStart(2, "0")}`;
+              const missing = key < firstKey || key > lastKey;
+              const count = counts.get(key) ?? 0;
+              const intensity = count
+                ? Math.min(0.92, 0.16 + (Math.log10(count + 1) / Math.log10(max + 1)) * 0.76)
+                : 0.05;
               return (
                 <button
                   key={mi}
                   className={missing ? "missing" : ""}
-                  style={
-                    !missing
-                      ? {
-                          background: `rgba(239,91,33,${count ? Math.min(0.25 + count * 0.22, 0.95) : 0.06})`,
-                        }
-                      : undefined
-                  }
-                  title={`${monthNames[mi]} ${y}: ${missing ? "Missing data" : `${count} hotspots • Complete coverage`}`}
+                  style={!missing ? { background: `rgba(239,91,33,${intensity})` } : undefined}
+                  title={`${monthNames[mi]} ${y}: ${missing ? "No source coverage" : `${formatCount(count)} hotspots`}`}
                   onClick={() => !missing && onSelect(y, mi + 1)}
                 >
-                  <span>{count || ""}</span>
+                  <span>{count ? formatCompact(count) : ""}</span>
                 </button>
               );
             })}
@@ -1356,13 +1128,14 @@ function Heatmap({
         <i />
         <i />
         <span>Higher</span>
-        <em /> Missing data
+        <em /> No coverage
       </div>
     </div>
   );
 }
 
 function CalendarPage({
+  dataset,
   pending,
   applied,
   setPending,
@@ -1371,6 +1144,7 @@ function CalendarPage({
   error,
   navigateMap,
 }: {
+  dataset: Dataset;
   pending: Filters;
   applied: Filters;
   setPending: (f: Filters) => void;
@@ -1379,15 +1153,18 @@ function CalendarPage({
   error: string;
   navigateMap: (p: Partial<Filters>) => void;
 }) {
-  const rows = filterRows(records, applied);
+  const result = useMemo(() => dataset.query(applied), [dataset, applied]);
+  const counts = useMemo(() => new Map(result.byMonth), [result]);
   return (
     <div className="page">
       <PageHeader
         eyebrow="Seasonality explorer"
         title="Activity Calendar"
         subtitle="Explore monthly hotspot intensity and archive coverage"
+        badge={`${formatCount(result.count)} hotspots`}
       />
       <FilterBar
+        dataset={dataset}
         pending={pending}
         setPending={setPending}
         apply={apply}
@@ -1406,10 +1183,15 @@ function CalendarPage({
           <h2>When burning activity appears</h2>
           <p>
             Darker cells indicate more satellite hotspot observations. Hatched cells identify
-            periods without complete source data; pale cells represent a confirmed zero.
+            periods without source coverage; pale cells represent a confirmed zero.
           </p>
         </div>
-        <Heatmap rows={rows} onSelect={(y, m) => navigateMap(monthRange(y, m))} />
+        <Heatmap
+          counts={counts}
+          start={dataset.manifest.coverage.start}
+          end={dataset.manifest.coverage.end}
+          onSelect={(y, m) => navigateMap(monthRange(y, m))}
+        />
       </section>
       <div className="calendar-notes">
         <div>
@@ -1422,7 +1204,9 @@ function CalendarPage({
         <div>
           <strong>Data coverage</strong>
           <p>
-            Missing data is visually distinct from zero hotspots and is excluded from comparisons.
+            Archive coverage runs {dataset.manifest.coverage.start} to{" "}
+            {dataset.manifest.coverage.end}. Missing data is visually distinct from zero hotspots and
+            is excluded from comparisons.
           </p>
         </div>
       </div>
@@ -1431,6 +1215,7 @@ function CalendarPage({
 }
 
 function Comparison({
+  dataset,
   pending,
   applied,
   setPending,
@@ -1439,6 +1224,7 @@ function Comparison({
   error,
   download,
 }: {
+  dataset: Dataset;
   pending: Filters;
   applied: Filters;
   setPending: (f: Filters) => void;
@@ -1447,7 +1233,7 @@ function Comparison({
   error: string;
   download: () => void;
 }) {
-  const rows = filterRows(records, applied);
+  const result = useMemo(() => dataset.query(applied), [dataset, applied]);
   return (
     <div className="page">
       <PageHeader
@@ -1455,8 +1241,10 @@ function Comparison({
         title="Sensor Comparison"
         subtitle="Compare MODIS and VIIRS with the right context"
         action={<DownloadButton onClick={download} />}
+        badge={`${formatCount(result.count)} records`}
       />
       <FilterBar
+        dataset={dataset}
         pending={pending}
         setPending={setPending}
         apply={apply}
@@ -1470,7 +1258,7 @@ function Comparison({
         </span>
         <strong>Applied date range: {appliedRange(applied)}</strong>
       </div>
-      <RawComparison rows={rows} />
+      <RawComparison result={result} />
       <section className="method-note comparison-caution">
         <div className="method-number">01</div>
         <div>
@@ -1491,10 +1279,10 @@ function Comparison({
     </div>
   );
 }
-function RawComparison({ rows }: { rows: RecordRow[] }) {
-  const m = rows.filter((r) => r.sensor === "MODIS").length,
-    v = rows.filter((r) => r.sensor === "VIIRS").length,
-    max = Math.max(m, v, 1);
+
+function RawComparison({ result }: { result: FilterResult }) {
+  const total = Math.max(result.count, 1);
+  const max = Math.max(...result.bySensor.map(([, value]) => value), 1);
   return (
     <div className="comparison-grid">
       <Panel
@@ -1503,44 +1291,44 @@ function RawComparison({ rows }: { rows: RecordRow[] }) {
         className="wide"
       >
         <div className="sensor-bars">
-          <div>
-            <span>MODIS</span>
-            <i>
-              <b style={{ width: `${(m / max) * 100}%` }} />
-            </i>
-            <strong>{m}</strong>
-          </div>
-          <div>
-            <span>VIIRS</span>
-            <i>
-              <b style={{ width: `${(v / max) * 100}%` }} />
-            </i>
-            <strong>{v}</strong>
-          </div>
+          {result.bySensor.map(([name, value]) => (
+            <div key={name} title={`${formatCount(value)} ${name} records`}>
+              <span>{name}</span>
+              <i>
+                <b style={{ width: `${(value / max) * 100}%` }} />
+              </i>
+              <strong>
+                {formatCompact(value)} · {Math.round((value / total) * 100)}%
+              </strong>
+            </div>
+          ))}
         </div>
         <p className="chart-caption">
           VIIRS has finer spatial resolution and typically detects more hotspots than MODIS. Count
           differences do not necessarily indicate more burning.
         </p>
       </Panel>
-      <Panel title="Record definitions" subtitle="What the values represent">
+      <Panel title="Satellite breakdown" subtitle="What the values represent">
         <div className="definitions">
-          <div>
-            <strong>MODIS</strong>
-            <span>Terra + Aqua</span>
-            <p>Nominal 1 km active-fire product.</p>
-          </div>
-          <div>
-            <strong>VIIRS</strong>
-            <span>Suomi NPP + NOAA-20/21</span>
-            <p>Nominal 375 m active-fire product.</p>
-          </div>
+          {result.bySatellite.map(([name, value]) => (
+            <div key={name}>
+              <strong>{name}</strong>
+              <span>{Math.round((value / total) * 100)}% of records</span>
+              <p>
+                {formatCount(value)} detections ·{" "}
+                {name === "Terra" || name === "Aqua" ? "MODIS, nominal 1 km" : "VIIRS, nominal 375 m"}
+              </p>
+            </div>
+          ))}
+          {!result.bySatellite.length && <EmptyMini />}
         </div>
       </Panel>
     </div>
   );
 }
+
 function AnomalyDetection({
+  dataset,
   pending,
   applied,
   setPending,
@@ -1549,6 +1337,7 @@ function AnomalyDetection({
   error,
   navigateMap,
 }: {
+  dataset: Dataset;
   pending: Filters;
   applied: Filters;
   setPending: (f: Filters) => void;
@@ -1557,18 +1346,18 @@ function AnomalyDetection({
   error: string;
   navigateMap: (p: Partial<Filters>) => void;
 }) {
-  const rows = filterRows(records, applied);
-  const anomalies = rows
-    .filter((row) => row.frp >= 35 || row.confidence === "High")
-    .sort((a, b) => b.frp - a.frp);
+  const result = useMemo(() => dataset.query(applied), [dataset, applied]);
+  const flaggedProvinces = new Set(result.flagged.map((row) => row.province)).size;
   return (
     <div className="page">
       <PageHeader
         eyebrow="Pattern review"
         title="Anomaly Detection"
         subtitle="Review unusually intense or high-confidence hotspot observations"
+        badge={`${formatCount(result.flaggedCount)} flagged`}
       />
       <FilterBar
+        dataset={dataset}
         pending={pending}
         setPending={setPending}
         apply={apply}
@@ -1577,27 +1366,29 @@ function AnomalyDetection({
       />
       <div className="helper-row">
         <span>
-          <Icon name="info" size={15} /> Prototype rule: FRP ≥ 35 MW or high source confidence.
+          <Icon name="info" size={15} /> Prototype rule: FRP ≥ 100 MW (roughly the top 1% of
+          detections).
         </span>
         <strong>Applied date range: {appliedRange(applied)}</strong>
       </div>
       <div className="anomaly-stats">
-        <Stat label="Flagged observations" value={anomalies.length.toString()} icon="anomaly" />
         <Stat
-          label="Highest observed FRP"
-          value={anomalies[0] ? `${anomalies[0].frp} MW` : "—"}
-          icon="flame"
+          label="Flagged observations"
+          value={formatCount(result.flaggedCount)}
+          icon="anomaly"
         />
+        <Stat label="Highest observed FRP" value={`${result.maxFrp} MW`} icon="flame" />
         <Stat
-          label="Provinces flagged"
-          value={new Set(anomalies.map((row) => row.province)).size.toString()}
+          label="Provinces in top 100"
+          value={`${flaggedProvinces} / ${dataset.provinces.length}`}
           icon="map"
         />
       </div>
       <Panel
-        title="Flagged hotspot observations"
-        subtitle="Select an observation to inspect it on the map"
+        title="Top 100 flagged observations by FRP"
+        subtitle="Select an observation to inspect its day on the map"
         className="anomaly-table"
+        badge={`Top ${result.flagged.length}`}
       >
         <table>
           <thead>
@@ -1611,7 +1402,7 @@ function AnomalyDetection({
             </tr>
           </thead>
           <tbody>
-            {anomalies.map((row) => (
+            {result.flagged.map((row) => (
               <tr
                 key={row.id}
                 onClick={() =>
@@ -1636,8 +1427,9 @@ function AnomalyDetection({
         </table>
       </Panel>
       <p className="footnote">
-        Demo analysis only. Flags identify unusual observations in this illustrative dataset and are
-        not operational emergency alerts.
+        Flags identify unusually intense observations (FRP ≥ 100 MW) and are not operational
+        emergency alerts. MODIS reports higher FRP values than VIIRS, so raw FRP rankings are
+        dominated by MODIS — compare sensors with care.
       </p>
     </div>
   );

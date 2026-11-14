@@ -1,4 +1,4 @@
-import { defineConfig, type HtmlTagDescriptor, type Plugin } from "vite";
+import { defineConfig, loadEnv, type HtmlTagDescriptor, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import fs from "node:fs";
@@ -10,6 +10,9 @@ import siteConfiguration from "./.figma/make/site.json";
 export default defineConfig(({ mode }) => {
   // .figma/make/deploy-preview passes `--mode development` for cached-preview builds.
   const emitSourcemaps = mode === "development";
+  // Server-side only: no VITE_ prefix, so the FIRMS key never reaches the bundle.
+  const env = loadEnv(mode, process.cwd(), "");
+  const firmsKey = env.FIRMS_MAP_KEY ?? process.env.FIRMS_MAP_KEY ?? "";
 
   return {
     base: process.env.FIGMA_PUBLIC_URL ? `${process.env.FIGMA_PUBLIC_URL}/` : "/",
@@ -25,6 +28,7 @@ export default defineConfig(({ mode }) => {
       figmaReactRefreshBoundaryFallback(),
       figmaMakeKitPlugin({ storiesGlob: "/src/**/*.stories.{ts,tsx,js,jsx}" }),
       figmaLinkedPackageSourcemaps(),
+      firmsApiPlugin(firmsKey),
     ],
     resolve: {
       alias: {
@@ -486,6 +490,154 @@ function figmaLinkedPackageSourcemaps(): Plugin {
       });
       delete map.sourceRoot;
       return { code: code.replace(sourceMappingUrl, ""), map };
+    },
+  };
+}
+
+/**
+ * NASA FIRMS live-fire proxy.
+ *
+ * The FIRMS MAP_KEY is a server-side secret: it must not be shipped in the
+ * client bundle, so every call goes through this middleware instead of the
+ * browser talking to firms.modaps.eosdis.nasa.gov directly.
+ *
+ * Routes (JSON out, CSV/JSON in):
+ *   GET /api/firms/hotspots?days=1..5&sources=VIIRS_NOAA20_NRT,...
+ *   GET /api/firms/status      -> map key quota for the current 10-minute window
+ *   GET /api/firms/availability-> dataset min/max dates
+ */
+import {
+  FIRMS_BASE,
+  FIRMS_BBOX,
+  FIRMS_MAX_DAYS,
+  FIRMS_SOURCES,
+  parseAvailabilityCsv,
+  parseFirmsCsv,
+  sortDetections,
+  type LiveDetection,
+} from "./src/firmsCore.ts";
+
+function firmsApiPlugin(mapKey: string): Plugin {
+  const cache = new Map<string, { expires: number; value: unknown }>();
+
+  async function cached<T>(key: string, ttlMs: number, load: () => Promise<T>): Promise<T> {
+    const hit = cache.get(key);
+    if (hit && hit.expires > Date.now()) return hit.value as T;
+    const value = await load();
+    cache.set(key, { expires: Date.now() + ttlMs, value });
+    return value;
+  }
+
+  async function getText(url: string) {
+    const response = await fetch(url, { signal: AbortSignal.timeout(20_000) });
+    const text = await response.text();
+    if (!response.ok) throw new Error(`FIRMS HTTP ${response.status}: ${text.slice(0, 160)}`);
+    return text;
+  }
+
+  const middleware = async (
+    req: import("node:http").IncomingMessage,
+    res: import("node:http").ServerResponse,
+    next: () => void,
+  ) => {
+    const url = new URL(req.url ?? "/", "http://localhost");
+    if (!url.pathname.startsWith("/api/firms/")) return next();
+
+    const send = (status: number, payload: unknown) => {
+      res.statusCode = status;
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.setHeader("Cache-Control", "no-store");
+      res.end(JSON.stringify(payload));
+    };
+
+    if (!mapKey) {
+      send(500, {
+        error:
+          "FIRMS_MAP_KEY is not configured. Add it to .env.local (FIRMS_MAP_KEY=...) and restart the dev server.",
+      });
+      return;
+    }
+
+    try {
+      if (url.pathname === "/api/firms/hotspots") {
+        const days = Math.min(
+          FIRMS_MAX_DAYS,
+          Math.max(1, Number(url.searchParams.get("days") ?? "1") || 1),
+        );
+        const requested = (url.searchParams.get("sources") ?? FIRMS_SOURCES.join(","))
+          .split(",")
+          .map((source) => source.trim())
+          .filter(Boolean);
+        const sources = requested.filter((source) => FIRMS_SOURCES.includes(source));
+        if (!sources.length) {
+          send(400, { error: "No supported FIRMS sources were requested." });
+          return;
+        }
+
+        const payload = await cached(`hotspots:${days}:${sources.join(",")}`, 60_000, async () => {
+          const settled = await Promise.allSettled(
+            sources.map(async (source) => {
+              const text = await getText(
+                `${FIRMS_BASE}/api/area/csv/${mapKey}/${source}/${FIRMS_BBOX}/${days}`,
+              );
+              return parseFirmsCsv(text, source);
+            }),
+          );
+          const detections: LiveDetection[] = [];
+          const errors: { source: string; message: string }[] = [];
+          settled.forEach((result, index) => {
+            if (result.status === "fulfilled") detections.push(...result.value);
+            else
+              errors.push({ source: sources[index], message: String(result.reason).slice(0, 300) });
+          });
+          sortDetections(detections);
+          return {
+            fetchedAt: new Date().toISOString(),
+            days,
+            sources,
+            bbox: FIRMS_BBOX.split(",").map(Number),
+            detections,
+            errors,
+          };
+        });
+
+        send(200, payload);
+        return;
+      }
+
+      if (url.pathname === "/api/firms/status") {
+        const payload = await cached("status", 30_000, async () => {
+          const text = await getText(`${FIRMS_BASE}/mapserver/mapkey_status/?MAP_KEY=${mapKey}`);
+          return JSON.parse(text) as Record<string, unknown>;
+        });
+        send(200, payload);
+        return;
+      }
+
+      if (url.pathname === "/api/firms/availability") {
+        const payload = await cached("availability", 10 * 60_000, async () => {
+          const text = await getText(`${FIRMS_BASE}/api/data_availability/csv/${mapKey}/all`);
+          return parseAvailabilityCsv(text);
+        });
+        send(200, payload);
+        return;
+      }
+
+      send(404, { error: "Unknown live feed route." });
+    } catch (error) {
+      send(502, {
+        error: error instanceof Error ? error.message : "Upstream FIRMS request failed.",
+      });
+    }
+  };
+
+  return {
+    name: "firms-api",
+    configureServer(server) {
+      server.middlewares.use(middleware);
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use(middleware);
     },
   };
 }

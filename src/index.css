@@ -807,7 +807,7 @@ h1 {
   border: 0;
   background: transparent;
   display: grid;
-  grid-template-columns: 92px 1fr 24px;
+  grid-template-columns: 92px 1fr 34px;
   gap: 8px;
   align-items: center;
   text-align: left;
@@ -1619,7 +1619,7 @@ h1 {
     z-index: 40;
     margin: 0;
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
     gap: 2px;
     background: var(--navy);
     border-top: 1px solid rgba(255, 255, 255, 0.14);
@@ -1933,5 +1933,151 @@ h1 {
   }
   .stat strong {
     font-size: 17px;
+  }
+}
+
+/* Dataset loading splash */
+.splash {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: radial-gradient(circle at 28% 18%, var(--navy-2), #0c1826 72%);
+}
+.splash-card {
+  width: min(400px, 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  color: var(--cream);
+}
+.splash-card .brand-mark {
+  width: 54px;
+  height: 54px;
+  margin-bottom: 14px;
+}
+.splash-card strong {
+  font: 800 26px/1 "Manrope";
+  letter-spacing: -0.6px;
+}
+.splash-card small {
+  margin-top: 7px;
+  font: 600 10px/1.2 "DM Sans";
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(246, 243, 236, 0.55);
+}
+.splash-card p {
+  margin: 18px 0 0;
+  font-size: 12px;
+  color: rgba(246, 243, 236, 0.72);
+}
+.splash-error {
+  color: #ffb4a2 !important;
+  max-width: 360px;
+  line-height: 1.5;
+}
+.splash-bar {
+  width: 100%;
+  height: 4px;
+  margin-top: 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  overflow: hidden;
+}
+.splash-bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--orange), #ffad45);
+  transition: width 0.2s ease;
+}
+
+/* Static stand-in for the old playback button: shows the applied-period total */
+.playback-total {
+  width: 31px;
+  height: 31px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: white;
+  background: var(--orange);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+/* Live FIRMS feed controls */
+.live-sources {
+  display: grid;
+  gap: 5px;
+  margin: 12px 0 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 11px;
+}
+.live-sources > strong {
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.live-source {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 7px;
+  border: 1px solid #ddd9d0;
+  border-radius: 5px;
+  background: #fffdf8;
+  font-size: 9px;
+  cursor: pointer;
+}
+.live-source input {
+  margin: 0;
+  accent-color: var(--teal);
+}
+.live-source span {
+  font-weight: 700;
+}
+.live-source em {
+  margin-left: auto;
+  font-style: normal;
+  font-size: 7px;
+  color: #8a929a;
+  white-space: nowrap;
+}
+.live-source.on {
+  border-color: rgba(12, 143, 135, 0.45);
+  background: #f2faf8;
+}
+.live-meta {
+  margin: 9px 0 0;
+  font-size: 8px;
+  line-height: 1.5;
+  color: #6d7680;
+}
+.live-meta b {
+  color: var(--teal);
+}
+.live-table {
+  padding: 18px 0 36px;
+}
+.live-table .panel {
+  padding: 16px 18px 12px;
+}
+
+/* Compact nav labels on the mobile tab bar */
+.nav-short {
+  display: none;
+}
+@media (max-width: 860px) {
+  nav button .nav-long {
+    display: none;
+  }
+  nav button .nav-short {
+    display: block;
+    line-height: 1.1;
   }
 }

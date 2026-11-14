@@ -21,3 +21,7 @@ logs/
 /.plugins/
 /.opencode-skills/
 .vercel
+
+# Generated hotspot archive (rebuild with `npm run data`)
+public/data/hotspots.bin
+public/data/hotspots.json
