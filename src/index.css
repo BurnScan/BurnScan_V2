@@ -1051,6 +1051,181 @@ h1 {
   border-top: 1px solid var(--line);
   padding: 10px 10px 0;
 }
+.sensor-chart-wrap {
+  padding: 8px 10px 0;
+}
+.sensor-chart-legend {
+  display: flex;
+  justify-content: flex-end;
+  gap: 14px;
+  padding: 2px 6px 4px;
+  font-size: 9px;
+  font-weight: 800;
+}
+.sensor-chart-legend span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.sensor-chart-legend i {
+  width: 14px;
+  height: 3px;
+  border-radius: 2px;
+}
+.sensor-chart-legend .modis i {
+  background: var(--orange);
+}
+.sensor-chart-legend .viirs i {
+  background: var(--teal);
+}
+.sensor-chart {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.sensor-chart .axis-label {
+  fill: #7b858e;
+  font: 600 9px "DM Sans";
+}
+.sensor-chart .grid-line {
+  stroke: #e4e0d8;
+  stroke-width: 1;
+}
+.sensor-line {
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.sensor-line.modis {
+  stroke: var(--orange);
+}
+.sensor-line.viirs {
+  stroke: var(--teal);
+}
+.match-bars {
+  display: grid;
+  gap: 14px;
+  padding: 16px 10px 0;
+}
+.match-row {
+  display: grid;
+  grid-template-columns: 42px 1fr 42px;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+}
+.match-row span {
+  font-weight: 800;
+}
+.match-row i {
+  height: 20px;
+  background: #eeeae2;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.match-row b {
+  display: block;
+  height: 100%;
+}
+.match-row b.modis {
+  background: var(--orange);
+}
+.match-row b.viirs {
+  background: var(--teal);
+}
+.match-row strong {
+  text-align: right;
+  font: 800 12px "Manrope";
+}
+.match-row small {
+  grid-column: 2 / -1;
+  color: var(--muted);
+  font-size: 8px;
+}
+.match-details {
+  display: grid;
+  gap: 6px;
+  padding: 12px 10px 0;
+}
+.match-details > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 9px;
+}
+.match-details span {
+  color: var(--muted);
+}
+.match-details strong {
+  font: 800 10px "Manrope";
+}
+.match-details em {
+  font-style: normal;
+  color: var(--teal);
+  font-size: 9px;
+  font-weight: 700;
+}
+.match-table {
+  max-height: 320px;
+  overflow: auto;
+  padding: 8px 10px 0;
+}
+.match-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10px;
+}
+.match-table th {
+  position: sticky;
+  top: 0;
+  padding: 8px;
+  background: #eee9df;
+  color: #53606c;
+  font-size: 9px;
+  text-align: left;
+}
+.match-table td {
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.match-table td em {
+  display: block;
+  color: var(--teal);
+  font-size: 7px;
+  font-style: normal;
+  font-weight: 700;
+}
+.match-table tr.pre-viirs td {
+  color: #9aa4aa;
+}
+.cross-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-height: 240px;
+  text-align: center;
+}
+.cross-loading .radar {
+  width: 58px;
+  height: 58px;
+}
+.cross-loading strong {
+  font: 800 13px "Manrope";
+}
+.cross-loading p {
+  margin: 0;
+  max-width: 280px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
 .definitions {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1279,6 +1454,43 @@ h1 {
 .map-layers input {
   accent-color: var(--teal);
 }
+.map-layers .area-tools {
+  display: grid;
+  gap: 7px;
+  border-top: 1px solid var(--line);
+  margin-top: 4px;
+  padding-top: 11px;
+}
+.area-tools > strong {
+  font: 800 11px "Manrope";
+}
+.area-tools button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 31px;
+  border: 1px solid #d4d2cb;
+  border-radius: 5px;
+  background: white;
+  color: var(--navy);
+  font: 700 9px "DM Sans";
+  cursor: pointer;
+}
+.area-tools button:hover {
+  background: #f2f5f3;
+}
+.area-tools button.active {
+  color: white;
+  border-color: var(--teal);
+  background: var(--teal);
+}
+.area-tools button.text-button {
+  background: transparent;
+  color: var(--muted);
+  border-style: dashed;
+}
 .sensor-key {
   position: absolute;
   z-index: 6;
@@ -1343,6 +1555,123 @@ h1 {
   inset: 0;
   z-index: 1;
   background: #163a33;
+}
+.leaflet-map.map-drawing {
+  cursor: crosshair;
+  touch-action: none;
+  user-select: none;
+}
+.draw-hint {
+  position: absolute;
+  z-index: 8;
+  left: 50%;
+  top: 18px;
+  transform: translateX(-50%);
+  display: grid;
+  gap: 1px;
+  padding: 8px 14px;
+  border-radius: 7px;
+  background: rgba(9, 30, 28, 0.92);
+  color: #fdfbf4;
+  text-align: center;
+  box-shadow: 0 6px 18px rgba(8, 28, 26, 0.28);
+  pointer-events: none;
+}
+.draw-hint strong {
+  font: 800 11px "Manrope";
+}
+.draw-hint span {
+  font-size: 8px;
+  color: rgba(253, 251, 244, 0.75);
+}
+.area-section {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #e8e5de;
+}
+.area-section > strong {
+  display: block;
+  font: 800 10px "Manrope";
+  margin-bottom: 5px;
+}
+.area-section p {
+  margin: 0;
+  color: #66717c;
+  font-size: 9px;
+  line-height: 1.45;
+}
+.area-months {
+  display: flex;
+  align-items: end;
+  gap: 2px;
+  height: 46px;
+  margin-top: 4px;
+}
+.area-months > div {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: end;
+  gap: 2px;
+}
+.area-months i {
+  width: 100%;
+  border-radius: 2px 2px 0 0;
+  background: #9db8b3;
+}
+.area-months i.critical {
+  background: var(--orange);
+}
+.area-months span {
+  font-size: 6.5px;
+  color: var(--muted);
+}
+.area-anomalies {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 5px;
+}
+.area-anomalies li {
+  display: grid;
+  gap: 1px;
+  padding: 5px 7px;
+  border-radius: 5px;
+  background: #fff3e9;
+}
+.area-anomalies b {
+  font: 800 9px "Manrope";
+  color: var(--orange);
+}
+.area-anomalies span {
+  font-size: 8px;
+  color: #66717c;
+}
+.area-export {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 12px;
+  padding: 9px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--teal);
+  color: white;
+  font: 700 9px "DM Sans";
+  cursor: pointer;
+}
+.area-export:hover {
+  background: #0b6f6b;
+}
+.area-empty {
+  font-size: 10px;
+  line-height: 1.5;
+  color: #66717c;
+  margin-top: 14px;
 }
 .leaflet-container {
   font-family: "DM Sans", sans-serif;
@@ -1892,6 +2221,10 @@ h1 {
   .basemap-toggle button {
     min-height: 34px;
     padding: 6px 9px;
+  }
+  .draw-hint {
+    top: 104px;
+    width: calc(100% - 24px);
   }
   .zoom,
   .map-summary,

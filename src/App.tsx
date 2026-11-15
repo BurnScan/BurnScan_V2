@@ -1,15 +1,19 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import MapView, { type Basemap, type MapPoint } from "./MapView";
+import MapView, { type AreaBounds, type Basemap, type MapPoint } from "./MapView";
 import Icon from "./Icon";
 import LiveAlerts from "./LiveAlerts";
 import {
   loadDataset,
+  type AreaStats,
   type Count,
+  type CrossSensorStats,
   type Dataset,
   type Filters,
   type FilterResult,
   type LoadProgress,
   type MapCell,
+  type SensorCounts,
+  type YearMatch,
 } from "./dataset";
 
 type Page = "map" | "live" | "dashboard" | "calendar" | "comparison" | "anomaly";
@@ -76,6 +80,7 @@ function FilterField({
   onChange,
   options,
   locked,
+  hint,
   allSensorLabel = "All sensors",
   min,
 }: {
@@ -84,6 +89,7 @@ function FilterField({
   onChange?: (v: string) => void;
   options?: string[];
   locked?: boolean;
+  hint?: string;
   allSensorLabel?: string;
   min?: string;
 }) {
@@ -91,7 +97,12 @@ function FilterField({
     <label className="field">
       <span>{label}</span>
       {options ? (
-        <select value={value} onChange={(e) => onChange?.(e.target.value)} disabled={locked}>
+        <select
+          value={value}
+          onChange={(e) => onChange?.(e.target.value)}
+          disabled={locked}
+          title={locked ? hint : undefined}
+        >
           {options.map((o) => (
             <option key={o} value={o}>
               {o === "All sensors" ? allSensorLabel : o}
@@ -120,6 +131,8 @@ function FilterBar({
   reset,
   showProvince = false,
   country = false,
+  showSensor = true,
+  showSatellite = true,
   allSensorLabel = "All sensors",
   error,
 }: {
@@ -130,11 +143,15 @@ function FilterBar({
   reset: () => void;
   showProvince?: boolean;
   country?: boolean;
+  showSensor?: boolean;
+  showSatellite?: boolean;
   allSensorLabel?: string;
   error: string;
 }) {
   const sensorChange = (sensor: string) =>
     setPending({ ...pending, sensor, satellite: "All satellites" });
+  const satelliteLocked =
+    pending.sensor !== "MODIS" && pending.sensor !== "VIIRS";
   return (
     <div className="filter-wrap">
       <div className="filter-grid">
@@ -147,19 +164,25 @@ function FilterBar({
             onChange={(province) => setPending({ ...pending, province })}
           />
         )}
-        <FilterField
-          label="Sensor"
-          value={pending.sensor}
-          options={["All sensors", ...dataset.sensors]}
-          onChange={sensorChange}
-          allSensorLabel={allSensorLabel}
-        />
-        <FilterField
-          label="Satellite"
-          value={pending.satellite}
-          options={dataset.satellitesFor(pending.sensor)}
-          onChange={(satellite) => setPending({ ...pending, satellite })}
-        />
+        {showSensor && (
+          <FilterField
+            label="Sensor"
+            value={pending.sensor}
+            options={["All sensors", ...dataset.sensors]}
+            onChange={sensorChange}
+            allSensorLabel={allSensorLabel}
+          />
+        )}
+        {showSatellite && (
+          <FilterField
+            label="Satellite"
+            value={pending.satellite}
+            options={dataset.satellitesFor(pending.sensor)}
+            onChange={(satellite) => setPending({ ...pending, satellite })}
+            locked={satelliteLocked}
+            hint="Select MODIS or VIIRS to choose a satellite"
+          />
+        )}
         <FilterField
           label="Start date"
           value={pending.start}
@@ -518,12 +541,40 @@ function MapPage({
   const [showProtected, setShowProtected] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [selected, setSelected] = useState<MapCell | null>(null);
+  const [drawMode, setDrawMode] = useState(false);
+  const [area, setArea] = useState<AreaBounds | null>(null);
+
+  const areaStats = useMemo(
+    () => (area ? dataset.areaStats(applied, area) : null),
+    [dataset, applied, area],
+  );
+
+  const handleAreaDrawn = useCallback((next: AreaBounds) => {
+    setArea(next);
+    setDrawMode(false);
+    setSelected(null);
+  }, []);
+
+  const cancelDraw = useCallback(() => setDrawMode(false), []);
+
+  const exportArea = useCallback(() => {
+    if (!area) return;
+    const { csv } = dataset.exportCsv(applied, 50_000, area);
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "burnscan-area-hotspots.csv";
+    link.click();
+    URL.revokeObjectURL(url);
+  }, [dataset, applied, area]);
 
   const selectPoint = useCallback(
     (point: MapPoint) => {
+      if (drawMode) return;
+      setArea(null);
       setSelected(result.cells.find((cell) => cell.id === point.id) ?? null);
     },
-    [result],
+    [result, drawMode],
   );
 
   const months = result.byMonth.slice(-48);
@@ -568,6 +619,8 @@ function MapPage({
               reset={() => {
                 reset();
                 setSelected(null);
+                setArea(null);
+                setDrawMode(false);
               }}
               showProvince
               error={error}
@@ -590,6 +643,34 @@ function MapPage({
                   onChange={(e) => setShowProtected(e.target.checked)}
                 />
               </label>
+              <div className="area-tools">
+                <strong>Area analysis</strong>
+                <button
+                  type="button"
+                  className={drawMode ? "active" : ""}
+                  onClick={() => {
+                    setArea(null);
+                    setSelected(null);
+                    setFiltersOpen(false);
+                    setDrawMode((open) => !open);
+                  }}
+                >
+                  <Icon name="map" size={14} />
+                  {drawMode ? "Drag on map…" : area ? "Redraw area" : "Draw area"}
+                </button>
+                {area && (
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={() => {
+                      setArea(null);
+                      setDrawMode(false);
+                    }}
+                  >
+                    Clear selection
+                  </button>
+                )}
+              </div>
             </div>
           </div>
           <div className="sensor-key">
@@ -621,6 +702,10 @@ function MapPage({
             basemap={basemap}
             showBoundaries={showBoundaries}
             showProtected={showProtected}
+            area={area}
+            drawMode={drawMode}
+            onAreaDrawn={handleAreaDrawn}
+            onDrawCancel={cancelDraw}
           />
           {result.count === 0 && (
             <div className="empty">
@@ -658,8 +743,17 @@ function MapPage({
             Hotspot detections aggregated to ~11 km cells • CSV follows applied filters
           </div>
         </div>
-        <aside className={`detail-panel ${selected ? "open" : ""}`}>
-          {selected ? (
+        <aside className={`detail-panel ${selected || areaStats ? "open" : ""}`}>
+          {areaStats ? (
+            <AreaDetail
+              stats={areaStats}
+              onClose={() => {
+                setArea(null);
+                setDrawMode(false);
+              }}
+              onExport={exportArea}
+            />
+          ) : selected ? (
             <>
               <button className="close" onClick={() => setSelected(null)} aria-label="Close details">
                 <Icon name="close" />
@@ -742,10 +836,173 @@ function MapPage({
             <span>Applied area</span>
             <strong>{applied.province === "All provinces" ? "Cambodia" : applied.province}</strong>
           </div>
+          {areaStats && (
+            <div>
+              <span>Inside drawn box</span>
+              <strong>{formatCount(areaStats.count)}</strong>
+            </div>
+          )}
           <Badge label="Real detections" />
         </aside>
       </section>
     </div>
+  );
+}
+
+function AreaDetail({
+  stats,
+  onClose,
+  onExport,
+}: {
+  stats: AreaStats;
+  onClose: () => void;
+  onExport: () => void;
+}) {
+  const { bounds } = stats;
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const monthMax = Math.max(...stats.byMonthOfYear, 1);
+  const latSpan = Math.abs(bounds.north - bounds.south);
+  const lngSpan = Math.abs(bounds.east - bounds.west);
+  const centreLat = (bounds.north + bounds.south) / 2;
+  const areaKm2 =
+    latSpan *
+    lngSpan *
+    111.32 *
+    111.32 *
+    Math.cos((centreLat * Math.PI) / 180);
+  const boundsLabel = `${bounds.south.toFixed(2)}–${bounds.north.toFixed(2)}°N · ${bounds.west.toFixed(2)}–${bounds.east.toFixed(2)}°E`;
+  const anomalyLabel = (label: string) => {
+    const [year, month] = label.split("-");
+    return `${months[Number(month) - 1]} ${year}`;
+  };
+
+  return (
+    <>
+      <button className="close" onClick={onClose} aria-label="Clear area selection">
+        <Icon name="close" />
+      </button>
+      <span className="eyebrow">Drawn area</span>
+      <h2>Area analysis</h2>
+      <div className="detail-time">
+        {boundsLabel}
+        <span>
+          {" "}
+          · {formatCount(Math.round(areaKm2))} km²
+          {stats.count ? ` · ${formatDate(stats.firstDay)} – ${formatDate(stats.lastDay)}` : ""}
+        </span>
+      </div>
+      {stats.count === 0 ? (
+        <p className="area-empty">
+          No hotspots match the current filters inside this box. Widen the dates or clear the
+          sensor / province filters.
+        </p>
+      ) : (
+        <>
+          <dl>
+            <div>
+              <dt>Observations</dt>
+              <dd>{formatCount(stats.count)}</dd>
+            </div>
+            <div>
+              <dt>Sensor mix</dt>
+              <dd>
+                {formatCount(stats.modis)} MODIS · {formatCount(stats.viirs)} VIIRS
+              </dd>
+            </div>
+            <div>
+              <dt>Provinces</dt>
+              <dd>{stats.provinces.slice(0, 3).map(([name]) => name).join(", ")}</dd>
+            </div>
+            <div>
+              <dt>Peak month</dt>
+              <dd>
+                {stats.peakMonth
+                  ? `${stats.peakMonth[0]} (${formatCount(stats.peakMonth[1])})`
+                  : "—"}
+              </dd>
+            </div>
+            <div>
+              <dt>Peak day</dt>
+              <dd>
+                {stats.peakDay
+                  ? `${formatDate(stats.peakDay[0])} (${formatCount(stats.peakDay[1])})`
+                  : "—"}
+              </dd>
+            </div>
+            <div>
+              <dt>Peak year</dt>
+              <dd>
+                {stats.peakYear
+                  ? `${stats.peakYear[0]} (${formatCount(stats.peakYear[1])})`
+                  : "—"}
+              </dd>
+            </div>
+            <div>
+              <dt>Mean / max FRP</dt>
+              <dd>
+                {stats.meanFrp} / {stats.maxFrp} MW
+              </dd>
+            </div>
+            <div>
+              <dt>Fire alerts ≥ 100 MW</dt>
+              <dd>{formatCount(stats.flaggedCount)}</dd>
+            </div>
+          </dl>
+
+          <section className="area-section">
+            <strong>Critical period</strong>
+            <p>
+              {stats.criticalMonths.length
+                ? `${stats.criticalMonths.join(", ")} — these months hold ~80% of the area's detections.`
+                : "No seasonal concentration detected."}
+            </p>
+          </section>
+
+          <section className="area-section">
+            <strong>Monthly profile</strong>
+            <div className="area-months">
+              {stats.byMonthOfYear.map((value, index) => (
+                <div key={months[index]} title={`${months[index]}: ${formatCount(value)}`}>
+                  <i
+                    className={stats.criticalMonths.includes(months[index]) ? "critical" : ""}
+                    style={{ height: `${6 + (value / monthMax) * 34}px` }}
+                  />
+                  <span>{months[index][0]}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="area-section">
+            <strong>Unusual conditions</strong>
+            {stats.anomalyMonths.length ? (
+              <ul className="area-anomalies">
+                {stats.anomalyMonths.slice(0, 3).map((entry) => (
+                  <li key={entry.label}>
+                    <b>{anomalyLabel(entry.label)}</b>
+                    <span>
+                      {formatCount(entry.value)} obs · {entry.percentile}th pct
+                      {entry.median > 0 ? ` · ${entry.ratio.toFixed(1)}× median` : " · above every year"}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p>No month here exceeds the 95th percentile of its multi-year baseline.</p>
+            )}
+          </section>
+
+          <button className="area-export" onClick={onExport}>
+            <Icon name="download" size={14} /> Export area CSV
+          </button>
+        </>
+      )}
+      <p className="definition">
+        <Icon name="info" size={15} /> Anomalies compare each year-month with the same calendar
+        month across all years in this box, using the current sensor filter. 2012 marks the start
+        of VIIRS coverage, so later years sample two sensors.
+      </p>
+    </>
   );
 }
 
@@ -774,7 +1031,6 @@ function Dashboard({
     () => dataset.query({ ...applied, province: "All provinces" }),
     [dataset, applied],
   );
-  const monthCounts = useMemo(() => new Map(result.byMonth), [result]);
   const peak = result.byDay[0];
   return (
     <div className="page">
@@ -839,19 +1095,6 @@ function Dashboard({
           <PeakTable
             days={result.byDay}
             onSelect={(date) => navigateMap({ start: toDisplay(date), end: toDisplay(date) })}
-          />
-        </Panel>
-        <Panel
-          title="Burning activity calendar"
-          subtitle="Monthly activity pattern • select a cell to open the map"
-          className="full"
-        >
-          <Heatmap
-            compact
-            counts={monthCounts}
-            start={dataset.manifest.coverage.start}
-            end={dataset.manifest.coverage.end}
-            onSelect={(year, month) => navigateMap(monthRange(year, month))}
           />
         </Panel>
       </div>
@@ -1233,15 +1476,47 @@ function Comparison({
   error: string;
   download: () => void;
 }) {
-  const result = useMemo(() => dataset.query(applied), [dataset, applied]);
+  // Cross-sensor matching has no meaning with a single sensor selected, so this
+  // page always compares both and scopes only by province and date range.
+  const scope = useMemo(
+    () => ({ ...applied, sensor: "All sensors", satellite: "All satellites" }),
+    [applied],
+  );
+  const result = useMemo(() => dataset.query(scope), [dataset, scope]);
+  const [cross, setCross] = useState<CrossSensorStats | null>(null);
+
+  // Matching scans the whole archive (~1 s cold). Defer it so the filter bar and
+  // header paint before the main thread is occupied.
+  useEffect(() => {
+    let cancelled = false;
+    setCross(null);
+    const timer = window.setTimeout(() => {
+      if (cancelled) return;
+      const stats = dataset.crossSensor(scope);
+      if (!cancelled) setCross(stats);
+    }, 30);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [dataset, scope]);
+
+  const overlapLabel = cross?.overlap
+    ? `${formatDate(cross.overlap.first)} – ${formatDate(cross.overlap.last)}`
+    : "No overlap";
+
   return (
     <div className="page">
       <PageHeader
         eyebrow="Sensor analysis"
         title="Sensor Comparison"
-        subtitle="Compare MODIS and VIIRS with the right context"
+        subtitle={`Cross-sensor matching: opposite sensor within 1 km and ±24 h${
+          applied.province === "All provinces" ? "" : ` · ${applied.province}`
+        }`}
         action={<DownloadButton onClick={download} />}
-        badge={`${formatCount(result.count)} records`}
+        badge={
+          cross ? `${formatCount(cross.matchedHotspots)} matched` : "Computing matches"
+        }
       />
       <FilterBar
         dataset={dataset}
@@ -1249,33 +1524,257 @@ function Comparison({
         setPending={setPending}
         apply={apply}
         reset={reset}
+        showSensor={false}
+        showSatellite={false}
         error={error}
       />
       <div className="helper-row">
         <span>
-          <Icon name="info" size={15} /> Raw hotspot counts from different sensors are not directly
-          comparable.
+          <Icon name="info" size={15} /> Sensor and satellite filters are hidden here: matching
+          always compares both sensors.
         </span>
         <strong>Applied date range: {appliedRange(applied)}</strong>
       </div>
+      {cross ? (
+        <>
+          <div className="stats">
+            <Stat
+              label="Matched hotspots"
+              value={formatCount(cross.matchedHotspots)}
+              note={`${formatCount(cross.matchedModis)} MODIS · ${formatCount(cross.matchedViirs)} VIIRS`}
+              icon="compare"
+            />
+            <Stat
+              label="MODIS → VIIRS match"
+              value={`${cross.modisMatchRate}%`}
+              note={`${formatCount(cross.matchedModis)} of ${formatCount(cross.modis)} records`}
+              icon="satellite"
+            />
+            <Stat
+              label="VIIRS → MODIS match"
+              value={`${cross.viirsMatchRate}%`}
+              note={`${formatCount(cross.matchedViirs)} of ${formatCount(cross.viirs)} records`}
+              icon="satellite"
+            />
+            <Stat
+              label="VIIRS ÷ MODIS (overlap)"
+              value={cross.ratio ? `${cross.ratio}×` : "—"}
+              note={`${overlapLabel} · ${cross.rangeRatio ?? "—"}× full range`}
+              icon="flame"
+            />
+          </div>
+          <div className="dashboard-grid">
+            <Panel
+              title="MODIS vs VIIRS over time"
+              subtitle="Monthly hotspot observations in the applied range"
+              className="wide"
+            >
+              <SensorLineChart points={cross.byMonth} />
+            </Panel>
+            <Panel
+              title="Match outcome"
+              subtitle="Share of each sensor's detections with a partner in the other sensor"
+            >
+              <MatchBars cross={cross} />
+            </Panel>
+            <Panel
+              title="Matched-detection characteristics"
+              subtitle="FRP and confidence on detections that found a partner"
+            >
+              <MatchDetails cross={cross} />
+            </Panel>
+            <Panel
+              title="Match rate by year"
+              subtitle="VIIRS begins 20 Jan 2012; earlier MODIS records have no partner"
+              className="wide"
+            >
+              <YearMatchTable rows={cross.byYearMatch} />
+            </Panel>
+          </div>
+        </>
+      ) : (
+        <section className="panel cross-loading">
+          <span className="radar">
+            <span />
+          </span>
+          <strong>Computing cross-sensor matches…</strong>
+          <p>Scanning paired MODIS and VIIRS detections within 1 km and ±24 h.</p>
+        </section>
+      )}
       <RawComparison result={result} />
       <section className="method-note comparison-caution">
         <div className="method-number">01</div>
         <div>
-          <h2>Compare raw records with care</h2>
+          <h2>Matching rule</h2>
           <p>
-            MODIS and VIIRS differ in spatial resolution, overpass timing, and detection
-            sensitivity. Their raw hotspot totals should be read as separate observation streams.
+            A detection is matched when the other sensor observed a hotspot within 1 km and ±24
+            hours. The spatial radius is smaller than either sensor pixel, so this is a
+            conservative same-fire test, not a claim that both sensors saw the same pixel.
           </p>
         </div>
         <div>
-          <h3>Metric definition</h3>
+          <h3>Asymmetry</h3>
           <p>
-            Values are satellite hotspot records in the applied date range, not unique fires or
-            burned area.
+            VIIRS has 375 m pixels and detects smaller, cooler fires than MODIS. That is why
+            MODIS→VIIRS and VIIRS→MODIS match rates differ. Per-pixel FRP is not comparable across
+            sensors.
           </p>
         </div>
       </section>
+    </div>
+  );
+}
+
+function SensorLineChart({ points }: { points: SensorCounts[] }) {
+  if (!points.length) return <EmptyMini />;
+  const width = 640;
+  const height = 220;
+  const padL = 48;
+  const padR = 16;
+  const padT = 14;
+  const padB = 28;
+  const max = Math.max(...points.map((point) => Math.max(point.modis, point.viirs)), 1);
+  const count = points.length;
+  const x = (index: number) =>
+    padL + (count === 1 ? 0 : (index / (count - 1)) * (width - padL - padR));
+  const y = (value: number) => padT + (1 - value / max) * (height - padT - padB);
+  const line = (key: "modis" | "viirs") =>
+    points.map((point, index) => `${x(index).toFixed(1)},${y(point[key]).toFixed(1)}`).join(" ");
+  const yTicks = [1, 0.75, 0.5, 0.25, 0].map((ratio) => Math.round(max * ratio));
+  const tickCount = Math.min(6, count);
+  const xTicks = Array.from({ length: tickCount }, (_, index) =>
+    Math.round((index * (count - 1)) / Math.max(tickCount - 1, 1)),
+  );
+  return (
+    <div className="sensor-chart-wrap">
+      <div className="sensor-chart-legend">
+        <span className="modis">
+          <i /> MODIS
+        </span>
+        <span className="viirs">
+          <i /> VIIRS
+        </span>
+      </div>
+      <svg
+        className="sensor-chart"
+        viewBox={`0 0 ${width} ${height}`}
+        role="img"
+        aria-label="Monthly MODIS and VIIRS hotspot observations"
+      >
+        {yTicks.map((value) => (
+          <g key={value}>
+            <line x1={padL} x2={width - padR} y1={y(value)} y2={y(value)} className="grid-line" />
+            <text x={padL - 7} y={y(value) + 3} textAnchor="end" className="axis-label">
+              {formatCompact(value)}
+            </text>
+          </g>
+        ))}
+        <polyline points={line("modis")} className="sensor-line modis" />
+        <polyline points={line("viirs")} className="sensor-line viirs" />
+        {xTicks.map((index) => (
+          <text
+            key={index}
+            x={x(index)}
+            y={height - 8}
+            textAnchor="middle"
+            className="axis-label"
+          >
+            {points[index].label.slice(0, 4)}
+          </text>
+        ))}
+      </svg>
+      <p className="chart-caption">
+        VIIRS coverage starts 20 Jan 2012. Do not read the combined line across that boundary as a
+        real change in burning.
+      </p>
+    </div>
+  );
+}
+
+function MatchBars({ cross }: { cross: CrossSensorStats }) {
+  const rows = [
+    { name: "MODIS", total: cross.modis, matched: cross.matchedModis, rate: cross.modisMatchRate, tone: "modis" },
+    { name: "VIIRS", total: cross.viirs, matched: cross.matchedViirs, rate: cross.viirsMatchRate, tone: "viirs" },
+  ];
+  return (
+    <div className="match-bars">
+      {rows.map((row) => (
+        <div key={row.name} className="match-row">
+          <span>{row.name}</span>
+          <i>
+            <b className={row.tone} style={{ width: `${Math.min(100, row.rate)}%` }} />
+          </i>
+          <strong>{row.rate}%</strong>
+          <small>
+            {formatCount(row.matched)} matched · {formatCount(row.total - row.matched)} single-sensor
+          </small>
+        </div>
+      ))}
+      <p className="chart-caption">
+        A lower VIIRS→MODIS rate is expected: VIIRS finds many small fires that MODIS never sees.
+      </p>
+    </div>
+  );
+}
+
+function MatchDetails({ cross }: { cross: CrossSensorStats }) {
+  return (
+    <div className="match-details">
+      <div>
+        <span>Matched mean FRP</span>
+        <strong>MODIS {cross.frp.modisMatchedMean} MW</strong>
+        <em>VIIRS {cross.frp.viirsMatchedMean} MW</em>
+      </div>
+      <div>
+        <span>All-detection mean FRP</span>
+        <strong>MODIS {cross.frp.modisMean} MW</strong>
+        <em>VIIRS {cross.frp.viirsMean} MW</em>
+      </div>
+      <div>
+        <span>High-confidence share</span>
+        <strong>MODIS {cross.highConfidence.modis}%</strong>
+        <em>VIIRS {cross.highConfidence.viirs}%</em>
+      </div>
+      <p className="chart-caption">
+        Per-pixel FRP is systematically lower for VIIRS because its pixels are ~7× smaller. Compare
+        FRP integrated over a cell-day, not single detections.
+      </p>
+    </div>
+  );
+}
+
+function YearMatchTable({ rows }: { rows: YearMatch[] }) {
+  const visible = rows.filter((row) => row.modis || row.viirs);
+  if (!visible.length) return <EmptyMini />;
+  return (
+    <div className="match-table">
+      <table>
+        <thead>
+          <tr>
+            <th>Year</th>
+            <th>MODIS</th>
+            <th>VIIRS</th>
+            <th>MODIS match</th>
+            <th>VIIRS match</th>
+            <th>VIIRS ÷ MODIS</th>
+          </tr>
+        </thead>
+        <tbody>
+          {visible.map((row) => (
+            <tr key={row.label} className={row.viirs ? "" : "pre-viirs"}>
+              <td>
+                {row.label}
+                {row.label === "2012" && <em>VIIRS starts</em>}
+              </td>
+              <td>{formatCount(row.modis)}</td>
+              <td>{row.viirs ? formatCount(row.viirs) : "—"}</td>
+              <td>{row.modis ? `${row.modisRate}%` : "—"}</td>
+              <td>{row.viirs ? `${row.viirsRate}%` : "—"}</td>
+              <td>{row.modis && row.viirs ? `${(row.viirs / row.modis).toFixed(1)}×` : "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

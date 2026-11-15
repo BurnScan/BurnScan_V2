@@ -11,7 +11,7 @@
  * typed arrays without parsing anything, so filtering 2.7M observations stays
  * in the tens of milliseconds.
  */
-import type { MapPoint } from "./MapView";
+import type { AreaBounds, MapPoint } from "./MapView";
 
 export type Sensor = "MODIS" | "VIIRS";
 
@@ -53,6 +53,97 @@ export type MapCell = {
 };
 
 export type Count = readonly [label: string, value: number];
+
+export type AreaStats = {
+  bounds: AreaBounds;
+  count: number;
+  modis: number;
+  viirs: number;
+  provinces: Count[];
+  firstDay: string;
+  lastDay: string;
+  maxFrp: number;
+  meanFrp: number;
+  flaggedCount: number;
+  byMonth: Count[];
+  byMonthOfYear: number[];
+  byYear: Count[];
+  peakDay: Count | null;
+  peakMonth: Count | null;
+  peakYear: Count | null;
+  /** Calendar months that together account for ~80 % of detections in the area. */
+  criticalMonths: string[];
+  /** Months at or above the 95th percentile of the same calendar month's history. */
+  anomalyMonths: MonthAnomaly[];
+};
+
+export type MonthAnomaly = {
+  /** `YYYY-MM` */
+  label: string;
+  value: number;
+  median: number;
+  ratio: number;
+  percentile: number;
+};
+
+export type SensorCounts = {
+  label: string;
+  modis: number;
+  viirs: number;
+};
+
+export type YearMatch = SensorCounts & {
+  matchedModis: number;
+  matchedViirs: number;
+  modisRate: number;
+  viirsRate: number;
+};
+
+export type CrossSensorStats = {
+  modis: number;
+  viirs: number;
+  matchedModis: number;
+  matchedViirs: number;
+  modisMatchRate: number;
+  viirsMatchRate: number;
+  matchedHotspots: number;
+  modisOnly: number;
+  viirsOnly: number;
+  byMonth: SensorCounts[];
+  byYear: SensorCounts[];
+  byYearMatch: YearMatch[];
+  frp: {
+    modisMean: number;
+    viirsMean: number;
+    modisMatchedMean: number;
+    viirsMatchedMean: number;
+  };
+  highConfidence: { modis: number; viirs: number };
+  overlap: { first: string; last: string } | null;
+  /** VIIRS ÷ MODIS over the 2012+ overlap where both sensors exist. */
+  ratio: number | null;
+  /** VIIRS ÷ MODIS over the whole applied range (diluted by MODIS-only years). */
+  rangeRatio: number | null;
+};
+
+/** Spatial radius used for cross-sensor matching. */
+const MATCH_RADIUS_KM = 1;
+const MATCH_CELL_DEG = 0.01;
+
+const MONTH_LABELS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
 
 export type FilterResult = {
   count: number;
@@ -174,6 +265,10 @@ export class Dataset {
   readonly monthBase: number;
 
   private cache = new Map<string, FilterResult>();
+  private areaCache = new Map<string, AreaStats>();
+  private crossCache = new Map<string, CrossSensorStats>();
+  private dayOrder: Int32Array | null = null;
+  private dayOffsets: Int32Array | null = null;
 
   constructor(manifest: Manifest, buffer: ArrayBuffer) {
     this.manifest = manifest;
@@ -235,7 +330,9 @@ export class Dataset {
   satellitesFor(sensor: string) {
     const cached = this.satelliteCache.get(sensor);
     if (cached) return cached;
-    let options = ["All satellites", ...this.satellites];
+    // Satellite selection only makes sense inside one sensor; with "All
+    // sensors" the control is locked to All satellites.
+    let options = ["All satellites"];
     if (sensor === "MODIS" || sensor === "VIIRS") {
       const index = this.sensors.indexOf(sensor);
       const list: string[] = [];
@@ -403,7 +500,7 @@ export class Dataset {
     this.monthKeys.forEach((label, index) => {
       const value = monthCounts[index];
       if (value === 0) return;
-      byMonthOfYear[index % 12] += value;
+      byMonthOfYear[Number(label.slice(5, 7)) - 1] += value;
       byMonth.push([label, value] as const);
       const year = label.slice(0, 4);
       byYearMap.set(year, (byYearMap.get(year) ?? 0) + value);
@@ -448,12 +545,443 @@ export class Dataset {
   }
 
   /**
+   * Aggregate the archive inside a drawn rectangle. Applies the same filters as
+   * {@link query}, but is scoped to the bounds and adds the multi-year baseline
+   * used to flag unusual months and critical periods for that area.
+   */
+  areaStats(filters: Filters, bounds: AreaBounds): AreaStats {
+    const key = `${filters.province}|${filters.sensor}|${filters.satellite}|${filters.start}|${filters.end}|${bounds.south.toFixed(4)},${bounds.west.toFixed(4)},${bounds.north.toFixed(4)},${bounds.east.toFixed(4)}`;
+    const cached = this.areaCache.get(key);
+    if (cached) return cached;
+
+    const stats = this.computeArea(filters, bounds);
+    if (this.areaCache.size >= CELLS_CACHE_LIMIT) {
+      const oldest = this.areaCache.keys().next().value;
+      if (oldest !== undefined) this.areaCache.delete(oldest);
+    }
+    this.areaCache.set(key, stats);
+    return stats;
+  }
+
+  private computeArea(filters: Filters, bounds: AreaBounds): AreaStats {
+    const provinceIndex =
+      filters.province === "All provinces" ? -1 : this.provinces.indexOf(filters.province);
+    const sensorIndex =
+      filters.sensor === "All sensors" || filters.sensor === "All Sensor"
+        ? -1
+        : this.sensors.indexOf(filters.sensor);
+    const satelliteIndex =
+      filters.satellite === "All satellites" ? -1 : this.satellites.indexOf(filters.satellite);
+    const startDay = filters.start ? dayFromInput(filters.start) : Number.NEGATIVE_INFINITY;
+    const endDay = filters.end ? dayFromInput(filters.end) : Number.POSITIVE_INFINITY;
+
+    const modisIndex = this.sensors.indexOf("MODIS");
+    const byProvince = new Int32Array(this.provinces.length);
+    const byMonth = new Int32Array(this.monthKeys.length);
+    const byDay = new Int32Array(this.dayCount);
+    // Multi-year baseline for the same rectangle: keyed by global month index
+    // (year * 12 + month), so it ignores the applied date range on purpose.
+    const baseline = new Map<number, number>();
+
+    const { day, lat, lng, frp, sensorId, satelliteId, provinceId } = this;
+    let count = 0;
+    let modis = 0;
+    let viirs = 0;
+    let frpSum = 0;
+    let maxFrp = 0;
+    let flaggedCount = 0;
+    let firstMatch = Number.POSITIVE_INFINITY;
+    let lastMatch = Number.NEGATIVE_INFINITY;
+
+    for (let row = 0; row < this.size; row++) {
+      const rowLat = lat[row];
+      const rowLng = lng[row];
+      if (
+        rowLat < bounds.south ||
+        rowLat > bounds.north ||
+        rowLng < bounds.west ||
+        rowLng > bounds.east
+      ) {
+        continue;
+      }
+      if (sensorIndex !== -1 && sensorId[row] !== sensorIndex) continue;
+      if (satelliteIndex !== -1 && satelliteId[row] !== satelliteIndex) continue;
+      if (provinceIndex !== -1 && provinceId[row] !== provinceIndex) continue;
+
+      const dayValue = day[row];
+      const dayIndex = dayValue - this.minDay;
+      const monthIndex = this.monthBase + this.monthOfDay[dayIndex];
+      baseline.set(monthIndex, (baseline.get(monthIndex) ?? 0) + 1);
+
+      if (dayValue < startDay || dayValue > endDay) continue;
+
+      count++;
+      if (sensorId[row] === modisIndex) modis++;
+      else viirs++;
+      const frpValue = frp[row];
+      frpSum += frpValue;
+      if (frpValue > maxFrp) maxFrp = frpValue;
+      if (frpValue >= FLAGGED_FRP) flaggedCount++;
+      if (dayValue < firstMatch) firstMatch = dayValue;
+      if (dayValue > lastMatch) lastMatch = dayValue;
+      byProvince[provinceId[row]]++;
+      byMonth[monthIndex - this.monthBase]++;
+      byDay[dayIndex]++;
+    }
+
+    const byMonthOfYear = new Array(12).fill(0) as number[];
+    const byMonthEntries: Count[] = [];
+    this.monthKeys.forEach((label, index) => {
+      const value = byMonth[index];
+      if (value === 0) return;
+      byMonthOfYear[Number(label.slice(5, 7)) - 1] += value;
+      byMonthEntries.push([label, value] as const);
+    });
+
+    let peakMonth: Count | null = null;
+    byMonthOfYear.forEach((value, index) => {
+      if (value > 0 && (!peakMonth || value > peakMonth[1])) {
+        peakMonth = [MONTH_LABELS[index], value];
+      }
+    });
+
+    const byYearMap = new Map<string, number>();
+    byMonthEntries.forEach(([label, value]) => {
+      const year = label.slice(0, 4);
+      byYearMap.set(year, (byYearMap.get(year) ?? 0) + value);
+    });
+    const byYear = [...byYearMap].sort((a, b) => a[0].localeCompare(b[0]));
+    const peakYear = byYear.reduce<Count | null>(
+      (best, entry) => (!best || entry[1] > best[1] ? entry : best),
+      null,
+    );
+
+    let peakDay: Count | null = null;
+    for (let index = 0; index < byDay.length; index++) {
+      const value = byDay[index];
+      if (value > 0 && (!peakDay || value > peakDay[1])) {
+        peakDay = [this.dayLabels[index], value];
+      }
+    }
+
+    const criticalMonths = criticalMonthLabels(byMonthOfYear);
+
+    const years = [
+      ...new Set(
+        Array.from({ length: this.monthKeys.length }, (_, index) =>
+          Math.floor((this.monthBase + index) / 12),
+        ),
+      ),
+    ];
+    const anomalies: MonthAnomaly[] = [];
+    byMonthEntries.forEach(([label, value]) => {
+      const month = Number(label.slice(5, 7)) - 1;
+      const samples = years
+        .map((year) => baseline.get(year * 12 + month) ?? 0)
+        .sort((a, b) => a - b);
+      if (samples.length < 5) return;
+      const median = samples[Math.floor((samples.length - 1) / 2)];
+      const below = samples.filter((sample) => sample <= value).length;
+      const percentile = Math.round((below / samples.length) * 100);
+      if (value < 20 || percentile < 95) return;
+      const ratio = median > 0 ? value / median : Number.POSITIVE_INFINITY;
+      anomalies.push({ label, value, median, ratio, percentile });
+    });
+    anomalies.sort(
+      (a, b) => b.percentile - a.percentile || b.ratio - a.ratio || b.value - a.value,
+    );
+
+    return {
+      bounds,
+      count,
+      modis,
+      viirs,
+      provinces: countEntries(this.provinces, byProvince),
+      firstDay: count ? isoFromDay(firstMatch) : "",
+      lastDay: count ? isoFromDay(lastMatch) : "",
+      maxFrp: Math.round(maxFrp * 10) / 10,
+      meanFrp: count ? Number((frpSum / count).toFixed(2)) : 0,
+      flaggedCount,
+      byMonth: byMonthEntries,
+      byMonthOfYear,
+      byYear,
+      peakDay,
+      peakMonth,
+      peakYear,
+      criticalMonths,
+      anomalyMonths: anomalies.slice(0, 5),
+    };
+  }
+
+  /**
+   * Cross-sensor matching. A MODIS (or VIIRS) detection counts as matched when
+   * the other sensor has a detection within 1 km and ±24 h. Sensor / satellite
+   * filters are deliberately ignored: this view always compares both sensors,
+   * scoped only by province and date range.
+   */
+  crossSensor(filters: Filters): CrossSensorStats {
+    const key = `${filters.province}|${filters.start}|${filters.end}`;
+    const cached = this.crossCache.get(key);
+    if (cached) return cached;
+
+    const stats = this.computeCrossSensor(filters);
+    if (this.crossCache.size >= 8) {
+      const oldest = this.crossCache.keys().next().value;
+      if (oldest !== undefined) this.crossCache.delete(oldest);
+    }
+    this.crossCache.set(key, stats);
+    return stats;
+  }
+
+  private ensureDayOrder() {
+    if (this.dayOrder) return;
+    const counts = new Int32Array(this.dayCount);
+    for (let row = 0; row < this.size; row++) counts[this.day[row] - this.minDay]++;
+    const offsets = new Int32Array(this.dayCount + 1);
+    for (let index = 0; index < this.dayCount; index++) offsets[index + 1] = offsets[index] + counts[index];
+    const cursor = offsets.slice(0, this.dayCount);
+    const order = new Int32Array(this.size);
+    for (let row = 0; row < this.size; row++) {
+      order[cursor[this.day[row] - this.minDay]++] = row;
+    }
+    this.dayOrder = order;
+    this.dayOffsets = offsets;
+  }
+
+  private computeCrossSensor(filters: Filters): CrossSensorStats {
+    const empty: CrossSensorStats = {
+      modis: 0,
+      viirs: 0,
+      matchedModis: 0,
+      matchedViirs: 0,
+      modisMatchRate: 0,
+      viirsMatchRate: 0,
+      matchedHotspots: 0,
+      modisOnly: 0,
+      viirsOnly: 0,
+      byMonth: [],
+      byYear: [],
+      byYearMatch: [],
+      frp: { modisMean: 0, viirsMean: 0, modisMatchedMean: 0, viirsMatchedMean: 0 },
+      highConfidence: { modis: 0, viirs: 0 },
+      overlap: null,
+      ratio: null,
+      rangeRatio: null,
+    };
+
+    this.ensureDayOrder();
+    const order = this.dayOrder!;
+    const offsets = this.dayOffsets!;
+    const provinceIndex =
+      filters.province === "All provinces" ? -1 : this.provinces.indexOf(filters.province);
+    const startDay = filters.start ? dayFromInput(filters.start) : this.minDay;
+    const endDay = filters.end ? dayFromInput(filters.end) : this.maxDay;
+    const countFirst = Math.max(0, startDay - this.minDay);
+    const countLast = Math.min(this.dayCount - 1, endDay - this.minDay);
+    if (countFirst > countLast) return empty;
+    // Partners may sit one day outside the applied range; include them while
+    // matching so a filtered single day still finds ±24 h partners.
+    const firstIdx = Math.max(0, countFirst - 1);
+    const lastIdx = Math.min(this.dayCount - 1, countLast + 1);
+
+    const modisIndex = this.sensors.indexOf("MODIS");
+    const viirsIndex = this.sensors.indexOf("VIIRS");
+    if (modisIndex === -1 || viirsIndex === -1) return empty;
+
+    const matched = new Uint8Array(this.size);
+    const emptyIndex: Map<number, number[]> = new Map();
+
+    const buildDayIndex = (dayIndex: number, sensor: number) => {
+      const index = new Map<number, number[]>();
+      for (let cursor = offsets[dayIndex]; cursor < offsets[dayIndex + 1]; cursor++) {
+        const row = order[cursor];
+        if (this.sensorId[row] !== sensor) continue;
+        if (provinceIndex !== -1 && this.provinceId[row] !== provinceIndex) continue;
+        const key = matchCellKey(this.lat[row], this.lng[row]);
+        const list = index.get(key);
+        if (list) list.push(row);
+        else index.set(key, [row]);
+      }
+      return index;
+    };
+
+    const scan = (
+      sourceRow: number,
+      index: Map<number, number[]>,
+      sourceBit: number,
+      partnerBit: number,
+    ) => {
+      if (index.size === 0) return;
+      const lat = this.lat[sourceRow];
+      const lng = this.lng[sourceRow];
+      const binLat = Math.floor(lat / MATCH_CELL_DEG);
+      const binLng = Math.floor(lng / MATCH_CELL_DEG);
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const list = index.get((binLat + dy) * 100_000 + (binLng + dx));
+          if (!list) continue;
+          for (let entry = 0; entry < list.length; entry++) {
+            const row = list[entry];
+            if (distanceSqKm(lat, lng, this.lat[row], this.lng[row]) <= MATCH_RADIUS_KM ** 2) {
+              matched[sourceRow] |= sourceBit;
+              matched[row] |= partnerBit;
+            }
+          }
+        }
+      }
+    };
+
+    let currentViirs = buildDayIndex(firstIdx, viirsIndex);
+    for (let dayIndex = firstIdx; dayIndex <= lastIdx; dayIndex++) {
+      const nextModis = dayIndex < lastIdx ? buildDayIndex(dayIndex + 1, modisIndex) : emptyIndex;
+      const nextViirs = dayIndex < lastIdx ? buildDayIndex(dayIndex + 1, viirsIndex) : emptyIndex;
+
+      // Pairs whose earlier detection is on this day: MODIS(d)↔VIIRS(d),
+      // MODIS(d)↔VIIRS(d+1) and VIIRS(d)↔MODIS(d+1).
+      for (let cursor = offsets[dayIndex]; cursor < offsets[dayIndex + 1]; cursor++) {
+        const row = order[cursor];
+        if (provinceIndex !== -1 && this.provinceId[row] !== provinceIndex) continue;
+        if (this.sensorId[row] === modisIndex) {
+          if (currentViirs.size) scan(row, currentViirs, 1, 2);
+          if (nextViirs.size) scan(row, nextViirs, 1, 2);
+        } else if (nextModis.size) {
+          scan(row, nextModis, 2, 1);
+        }
+      }
+
+      currentViirs = nextViirs;
+    }
+
+    const modisMonths = new Int32Array(this.monthKeys.length);
+    const viirsMonths = new Int32Array(this.monthKeys.length);
+    const matchedModisMonths = new Int32Array(this.monthKeys.length);
+    const matchedViirsMonths = new Int32Array(this.monthKeys.length);
+    let modis = 0;
+    let viirs = 0;
+    let matchedModis = 0;
+    let matchedViirs = 0;
+    let modisFrpSum = 0;
+    let viirsFrpSum = 0;
+    let matchedModisFrpSum = 0;
+    let matchedViirsFrpSum = 0;
+    let modisHigh = 0;
+    let viirsHigh = 0;
+    let firstBoth = -1;
+    let lastBoth = -1;
+
+    for (let dayIndex = countFirst; dayIndex <= countLast; dayIndex++) {
+      let dayHasModis = false;
+      let dayHasViirs = false;
+      for (let cursor = offsets[dayIndex]; cursor < offsets[dayIndex + 1]; cursor++) {
+        const row = order[cursor];
+        if (provinceIndex !== -1 && this.provinceId[row] !== provinceIndex) continue;
+        const month = this.monthOfDay[dayIndex];
+        const frp = this.frp[row];
+        const high = this.highConfidence[this.confidenceId[row]] === 1;
+        if (this.sensorId[row] === modisIndex) {
+          modis++;
+          dayHasModis = true;
+          modisFrpSum += frp;
+          if (high) modisHigh++;
+          modisMonths[month]++;
+          if (matched[row] & 1) {
+            matchedModis++;
+            matchedModisFrpSum += frp;
+            matchedModisMonths[month]++;
+          }
+        } else if (this.sensorId[row] === viirsIndex) {
+          viirs++;
+          dayHasViirs = true;
+          viirsFrpSum += frp;
+          if (high) viirsHigh++;
+          viirsMonths[month]++;
+          if (matched[row] & 2) {
+            matchedViirs++;
+            matchedViirsFrpSum += frp;
+            matchedViirsMonths[month]++;
+          }
+        }
+      }
+      if (dayHasModis && dayHasViirs) {
+        if (firstBoth === -1) firstBoth = dayIndex;
+        lastBoth = dayIndex;
+      }
+    }
+
+    const byMonth: SensorCounts[] = [];
+    this.monthKeys.forEach((label, index) => {
+      const m = modisMonths[index];
+      const v = viirsMonths[index];
+      if (m || v) byMonth.push({ label, modis: m, viirs: v });
+    });
+
+    const yearMap = new Map<string, YearMatch>();
+    this.monthKeys.forEach((label, index) => {
+      const key = label.slice(0, 4);
+      let entry = yearMap.get(key);
+      if (!entry) {
+        entry = { label: key, modis: 0, viirs: 0, matchedModis: 0, matchedViirs: 0, modisRate: 0, viirsRate: 0 };
+        yearMap.set(key, entry);
+      }
+      entry.modis += modisMonths[index];
+      entry.viirs += viirsMonths[index];
+      entry.matchedModis += matchedModisMonths[index];
+      entry.matchedViirs += matchedViirsMonths[index];
+    });
+    yearMap.forEach((entry) => {
+      entry.modisRate = entry.modis ? round1((entry.matchedModis / entry.modis) * 100) : 0;
+      entry.viirsRate = entry.viirs ? round1((entry.matchedViirs / entry.viirs) * 100) : 0;
+    });
+    const byYearMatch = [...yearMap.values()]
+      .filter((entry) => entry.modis || entry.viirs)
+      .sort((a, b) => a.label.localeCompare(b.label));
+
+    // Ratio claims only make sense where both sensors exist. Pre-2012 is
+    // MODIS-only, so dividing by the full-range MODIS total understates VIIRS.
+    const overlapYears = byYearMatch.filter((entry) => Number(entry.label) >= 2012);
+    const overlapModis = overlapYears.reduce((sum, entry) => sum + entry.modis, 0);
+    const overlapViirs = overlapYears.reduce((sum, entry) => sum + entry.viirs, 0);
+
+    return {
+      modis,
+      viirs,
+      matchedModis,
+      matchedViirs,
+      modisMatchRate: modis ? round1((matchedModis / modis) * 100) : 0,
+      viirsMatchRate: viirs ? round1((matchedViirs / viirs) * 100) : 0,
+      matchedHotspots: matchedModis + matchedViirs,
+      modisOnly: modis - matchedModis,
+      viirsOnly: viirs - matchedViirs,
+      byMonth,
+      byYear: byYearMatch.map(({ label, modis: m, viirs: v }) => ({ label, modis: m, viirs: v })),
+      byYearMatch,
+      frp: {
+        modisMean: modis ? round2(modisFrpSum / modis) : 0,
+        viirsMean: viirs ? round2(viirsFrpSum / viirs) : 0,
+        modisMatchedMean: matchedModis ? round2(matchedModisFrpSum / matchedModis) : 0,
+        viirsMatchedMean: matchedViirs ? round2(matchedViirsFrpSum / matchedViirs) : 0,
+      },
+      highConfidence: {
+        modis: modis ? round1((modisHigh / modis) * 100) : 0,
+        viirs: viirs ? round1((viirsHigh / viirs) * 100) : 0,
+      },
+      overlap:
+        firstBoth === -1
+          ? null
+          : { first: isoFromDay(this.minDay + firstBoth), last: isoFromDay(this.minDay + lastBoth) },
+      ratio: overlapModis ? round2(overlapViirs / overlapModis) : null,
+      rangeRatio: modis ? round2(viirs / modis) : null,
+    };
+  }
+
+  /**
    * CSV for the applied filters. Very large result sets are sampled evenly
    * across the matching rows so the download stays a sensible size.
    */
-  exportCsv(filters: Filters, limit = 50_000) {
+  exportCsv(filters: Filters, limit = 50_000, bounds?: AreaBounds | null) {
     const result = this.query(filters);
-    const stride = Math.max(1, Math.ceil(result.count / limit));
+    const total = bounds ? this.areaStats(filters, bounds).count : result.count;
+    const stride = Math.max(1, Math.ceil(total / limit));
     const rows: string[] = [
       "Observation date,Time (ICT),Province,Sensor,Satellite,Latitude,Longitude,Source confidence,FRP (MW)",
     ];
@@ -471,6 +999,15 @@ export class Dataset {
       if (provinceIndex !== -1 && this.provinceId[row] !== provinceIndex) continue;
       if (sensorIndex !== -1 && this.sensorId[row] !== sensorIndex) continue;
       if (satelliteIndex !== -1 && this.satelliteId[row] !== satelliteIndex) continue;
+      if (
+        bounds &&
+        (this.lat[row] < bounds.south ||
+          this.lat[row] > bounds.north ||
+          this.lng[row] < bounds.west ||
+          this.lng[row] > bounds.east)
+      ) {
+        continue;
+      }
       if (matched++ % stride !== 0 || written >= limit) continue;
       const record = this.hotspot(row);
       rows.push(
@@ -492,10 +1029,47 @@ export class Dataset {
     return {
       csv: rows.join("\n"),
       exported: written,
-      total: result.count,
-      sampled: written < result.count,
+      total,
+      sampled: written < total,
     };
   }
+}
+
+function round1(value: number) {
+  return Math.round(value * 10) / 10;
+}
+
+function round2(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
+/** Coarse spatial bucket (~1.1 km) used as the candidate index for matching. */
+function matchCellKey(lat: number, lng: number) {
+  return Math.floor(lat / MATCH_CELL_DEG) * 100_000 + Math.floor(lng / MATCH_CELL_DEG);
+}
+
+/** Squared great-circle-ish distance in km (fast equirectangular approximation). */
+function distanceSqKm(lat1: number, lng1: number, lat2: number, lng2: number) {
+  const dLat = (lat2 - lat1) * 110.574;
+  const dLng = (lng2 - lng1) * 111.32 * Math.cos((((lat1 + lat2) / 2) * Math.PI) / 180);
+  return dLat * dLat + dLng * dLng;
+}
+
+/** Months (Jan–Dec) that together cover ~80 % of the area's detections. */
+function criticalMonthLabels(byMonthOfYear: number[]): string[] {  const total = byMonthOfYear.reduce((sum, value) => sum + value, 0);
+  if (!total) return [];
+  const ordered = byMonthOfYear
+    .map((value, index) => [index, value] as const)
+    .filter(([, value]) => value > 0)
+    .sort((a, b) => b[1] - a[1]);
+  const chosen = new Set<number>();
+  let running = 0;
+  for (const [index, value] of ordered) {
+    if (running / total >= 0.8) break;
+    chosen.add(index);
+    running += value;
+  }
+  return MONTH_LABELS.filter((_, index) => chosen.has(index));
 }
 
 function countEntries(names: string[], values: Int32Array): Count[] {

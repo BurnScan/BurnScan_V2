@@ -4,6 +4,14 @@ import "leaflet/dist/leaflet.css";
 
 export type Basemap = "terrain" | "satellite";
 
+/** Geographic rectangle drawn on the map, in decimal degrees. */
+export type AreaBounds = {
+  south: number;
+  north: number;
+  west: number;
+  east: number;
+};
+
 export type MapPoint = {
   id: number;
   lat: number;
@@ -102,7 +110,22 @@ function basemapSources(): Record<Basemap, BasemapSource> {
 const sourceFor = basemapSources();
 
 /** Layer panes so vector overlays can never paint over (or steal clicks from) hotspots. */
-const PANE = { boundaries: "boundaries", protected: "protected", hotspots: "hotspots" };
+const PANE = {
+  boundaries: "boundaries",
+  protected: "protected",
+  hotspots: "hotspots",
+  area: "area",
+};
+
+const AREA_STYLE: L.PathOptions = {
+  pane: PANE.area,
+  interactive: false,
+  color: "#ffe066",
+  weight: 2,
+  dashArray: "6 4",
+  fillColor: "#ffe066",
+  fillOpacity: 0.08,
+};
 
 function markerStyle(sensor: MapPoint["sensor"]) {
   return sensor === "VIIRS"
@@ -127,6 +150,10 @@ export default function MapView({
   basemap,
   showBoundaries,
   showProtected,
+  area,
+  drawMode = false,
+  onAreaDrawn,
+  onDrawCancel,
 }: {
   points: MapPoint[];
   selectedId: number | null;
@@ -134,6 +161,10 @@ export default function MapView({
   basemap: Basemap;
   showBoundaries: boolean;
   showProtected: boolean;
+  area?: AreaBounds | null;
+  drawMode?: boolean;
+  onAreaDrawn?: (area: AreaBounds) => void;
+  onDrawCancel?: () => void;
 }) {
   const holder = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
@@ -142,9 +173,15 @@ export default function MapView({
   const provincesRef = useRef<L.GeoJSON | null>(null);
   const protectedRef = useRef<L.GeoJSON | null>(null);
   const outlineRef = useRef<L.GeoJSON | null>(null);
+  const areaRef = useRef<L.Rectangle | null>(null);
   const pannedRef = useRef<number | null>(null);
+  const drawModeRef = useRef(drawMode);
   const tileErrors = useRef(0);
   const [tilesFailed, setTilesFailed] = useState(false);
+
+  useEffect(() => {
+    drawModeRef.current = drawMode;
+  }, [drawMode]);
 
   // Create the map once. Tile layers are left to the basemap effect below.
   useEffect(() => {
@@ -166,6 +203,7 @@ export default function MapView({
     map.createPane(PANE.boundaries).style.zIndex = "410";
     map.createPane(PANE.protected).style.zIndex = "420";
     map.createPane(PANE.hotspots).style.zIndex = "430";
+    map.createPane(PANE.area).style.zIndex = "440";
 
     L.control.attribution({ position: "bottomleft", prefix: false }).addTo(map);
     map.attributionControl?.addAttribution(
@@ -197,6 +235,7 @@ export default function MapView({
       provincesRef.current = null;
       protectedRef.current = null;
       outlineRef.current = null;
+      areaRef.current = null;
       pannedRef.current = null;
       if (import.meta.env.DEV) {
         delete (window as unknown as { __burnscanMap?: L.Map }).__burnscanMap;
@@ -252,7 +291,9 @@ export default function MapView({
         fillOpacity: selected ? 0.9 : total > 1 ? 0.1 + weight * 0.42 : 0.9,
         className: "hotspot-marker",
       });
-      marker.on("click", () => onSelect(point));
+      marker.on("click", () => {
+        if (!drawModeRef.current) onSelect(point);
+      });
       marker.bindTooltip(
         point.label ??
           (total > 1
@@ -372,6 +413,111 @@ export default function MapView({
     };
   }, [showProtected]);
 
+  // Draw-the-box tool. While active, pointer drags on the map paint a
+  // rectangle; on release the bounds are handed back to the page for analysis.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !drawMode || !onAreaDrawn) return;
+    const container = map.getContainer();
+    container.classList.add("map-drawing");
+    map.dragging.disable();
+    map.boxZoom.disable();
+
+    let start: L.LatLng | null = null;
+    let draft: L.Rectangle | null = null;
+
+    const toLatLng = (event: PointerEvent) => {
+      const rect = container.getBoundingClientRect();
+      return map.containerPointToLatLng(
+        L.point(event.clientX - rect.left, event.clientY - rect.top),
+      );
+    };
+
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.button !== 0) return;
+      if ((event.target as HTMLElement | null)?.closest(".leaflet-control")) return;
+      event.preventDefault();
+      start = toLatLng(event);
+      draft = L.rectangle(L.latLngBounds(start, start), AREA_STYLE).addTo(map);
+      container.setPointerCapture(event.pointerId);
+    };
+
+    const onPointerMove = (event: PointerEvent) => {
+      if (!start || !draft) return;
+      event.preventDefault();
+      draft.setBounds(L.latLngBounds(start, toLatLng(event)));
+    };
+
+    const onPointerUp = (event: PointerEvent) => {
+      if (!start || !draft) return;
+      const end = toLatLng(event);
+      const from = map.latLngToContainerPoint(start);
+      const to = map.latLngToContainerPoint(end);
+      const bounds = L.latLngBounds(start, end);
+      draft.remove();
+      draft = null;
+      start = null;
+      if (container.hasPointerCapture(event.pointerId)) {
+        container.releasePointerCapture(event.pointerId);
+      }
+      if (Math.abs(to.x - from.x) < 8 || Math.abs(to.y - from.y) < 8) return;
+      onAreaDrawn({
+        south: bounds.getSouth(),
+        west: bounds.getWest(),
+        north: bounds.getNorth(),
+        east: bounds.getEast(),
+      });
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onDrawCancel?.();
+    };
+
+    container.addEventListener("pointerdown", onPointerDown);
+    container.addEventListener("pointermove", onPointerMove);
+    container.addEventListener("pointerup", onPointerUp);
+    container.addEventListener("pointercancel", onPointerUp);
+    window.addEventListener("keydown", onKeyDown);
+
+    return () => {
+      container.classList.remove("map-drawing");
+      map.dragging.enable();
+      map.boxZoom.enable();
+      container.removeEventListener("pointerdown", onPointerDown);
+      container.removeEventListener("pointermove", onPointerMove);
+      container.removeEventListener("pointerup", onPointerUp);
+      container.removeEventListener("pointercancel", onPointerUp);
+      window.removeEventListener("keydown", onKeyDown);
+      draft?.remove();
+      draft = null;
+      start = null;
+    };
+  }, [drawMode, onAreaDrawn, onDrawCancel]);
+
+  // Committed rectangle for the current area selection.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (areaRef.current) {
+      map.removeLayer(areaRef.current);
+      areaRef.current = null;
+    }
+    if (!area) return;
+    areaRef.current = L.rectangle(
+      [
+        [area.south, area.west],
+        [area.north, area.east],
+      ],
+      { ...AREA_STYLE, dashArray: undefined, weight: 2.4 },
+    ).addTo(map);
+    return () => {
+      if (areaRef.current) {
+        areaRef.current.remove();
+        areaRef.current = null;
+      }
+    };
+  }, [area]);
+
   const zoom = (delta: number) => mapRef.current?.setZoom((mapRef.current.getZoom() ?? 7) + delta);
 
   const toggleFullscreen = () => {
@@ -384,6 +530,12 @@ export default function MapView({
   return (
     <>
       <div className="leaflet-map" ref={holder} aria-label="Map of Cambodia with hotspot markers" />
+      {drawMode && (
+        <div className="draw-hint">
+          <strong>Draw an area</strong>
+          <span>Drag a box on the map · Esc to cancel</span>
+        </div>
+      )}
       <div className="zoom">
         <button onClick={() => zoom(1)} aria-label="Zoom in">
           +

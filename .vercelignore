@@ -1,0 +1,13 @@
+# Local secrets: never upload these. Configure them in the Vercel dashboard,
+# or use `vercel env add` / `vercel --build-env` for one-off builds.
+.env
+.env.*
+!.env.example
+
+# Built output is regenerated on the build machine.
+dist
+
+# Not used by the web app.
+pentest
+README_vtest.md
+m-map.png

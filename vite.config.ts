@@ -3,8 +3,16 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import fs from "node:fs";
 import path from "node:path";
+import dns from "node:dns";
+import net from "node:net";
 
 import siteConfiguration from "./.figma/make/site.json";
+
+// Node's Happy Eyeballs (autoSelectFamily) stalls on some networks where IPv6
+// is advertised but unroutable, which made the FIRMS proxy time out. Prefer
+// IPv4 and skip auto-selection for server-side requests.
+dns.setDefaultResultOrder("ipv4first");
+net.setDefaultAutoSelectFamily(false);
 
 // Vite config — https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {

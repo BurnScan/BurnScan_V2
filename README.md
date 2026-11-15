@@ -57,7 +57,7 @@ Notes:
 
 | Mode | When | Key location | How it runs |
 |---|---|---|---|
-| **Proxy** (default) | `npm run dev`, `npm run preview`, any Node host | Server env `FIRMS_MAP_KEY` | `vite.config.ts` middleware at `/api/firms/*` |
+| **Proxy** (default) | `npm run dev`, `npm run preview`, Vercel, any Node host | Server env `FIRMS_MAP_KEY` | Vite middleware in dev/preview; `api/firms/*` Vercel Functions in production |
 | **Static** | GitHub Pages / S3 / Figma Make publish | `VITE_FIRMS_MAP_KEY` in the bundle | Browser calls FIRMS directly (their API sends `Access-Control-Allow-Origin: *`) |
 
 Static mode is opt-in at build time. If `VITE_FIRMS_MAP_KEY` is present it is
@@ -72,9 +72,25 @@ public in this mode — use a dedicated key you can rotate, and keep `.env*` out
 of git.
 
 If neither is configured, the Live page shows a clear message instead of
-breaking. For a serverless deployment you can port `firmsApiPlugin` to a
-Vercel/Netlify function unchanged — the parsing helpers already live in
-`src/firmsCore.ts` and are shared by both modes.
+breaking. The parsing helpers live in `src/firmsCore.ts` and are shared by both
+modes.
+
+### Deploy to Vercel
+
+`vercel.json`, `.vercelignore` and `api/firms/*` are included. The functions keep
+`FIRMS_MAP_KEY` server-side, so no `VITE_` key is needed:
+
+```bash
+npx vercel@latest login
+npx vercel@latest link            # accept the Vite preset: npm run build → dist
+npx vercel@latest env add FIRMS_MAP_KEY production
+npx vercel@latest deploy --prod
+```
+
+The CLI uploads the local tree, so `public/data/hotspots.*` is included even
+though it is git-ignored. A Git-based deploy needs those two files committed
+(or generated during the build). For a no-account demo use
+`npx vercel@latest deploy --temporary --env FIRMS_MAP_KEY=your_key`.
 
 ## Where the data comes from
 
